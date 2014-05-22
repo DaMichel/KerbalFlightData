@@ -20,4 +20,4 @@ by Anatid and contributors,
 
 License
 ----------------------------------------
-???
+GNU General Public License Version 3, see <http://www.gnu.org/licenses/>
