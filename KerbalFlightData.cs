@@ -18,6 +18,8 @@ using System;
 using System.Text;
 using UnityEngine;
 using System.Reflection;
+using System.Linq;
+using System.Collections.Generic;
 
 [KSPAddon(KSPAddon.Startup.Flight, false)]
 public class DMFlightData : MonoBehaviour
@@ -267,40 +269,43 @@ public class DMFlightData : MonoBehaviour
 
     protected static String FormatTime(double x_)
     {
+        const int MIN = 60;
+        const int H = MIN * 60;
+        const int D = H * 24;
+        const int Y = D * 365;
+
         int x = (int)x_;
-        int min = 60;
-        int h = min * 60;
-        int d = h * 24;
-        int y = d * 365;
-        String res = "";
-        if (x > y)
-        {
-            res += " " + (x / y).ToString() + "y";
-            x = x % y;
-        }
-        if (x > d)
-        {
-            res += " " + (x / d).ToString() + "d";
-            x = x % d;
-        }
-        if (x > h)
-        {
-            res += " " + (x / h).ToString() + "h";
-            x = x % h;
-        }
-        if (x > min)
-        {
-            res += (x / min).ToString() + "m";
-            x = x % min;
-        }
-        res += " " + x.ToString() + "s";
-        return res;
+        int y, d, m, h, s;
+        y = x/Y;
+        x = x%Y;
+        d = x/D;
+        x = x%D;
+        h = x/H;
+        x = x%H;
+        m = x/MIN;
+        x = x%MIN;
+        s = x;
+        int size = 3;
+        string [] arr = new string[size];
+        int idx = 0;
+        if (y > 0)
+            arr[idx++] = y.ToString()+"y";
+        if (d > 0)
+            arr[idx++] = d.ToString()+"d";
+        if (h > 0 && idx<size)
+            arr[idx++] = h.ToString()+"h";
+        if (m > 0 && idx<size)
+            arr[idx++] = m.ToString()+"m";
+        if (s > 0 && idx<size)
+            arr[idx++] = s.ToString()+"s"; 
+        return string.Join(" ", arr, 0, idx);
     }
     #endregion
 
     #region GUI
     GUIStyle[] styles = { null, null, null };
     GUIStyle style_label = null;
+    GUIStyle style_emphasized = null;
     bool guiReady = false;
 
     void SetupGUI()
@@ -308,20 +313,23 @@ public class DMFlightData : MonoBehaviour
         var s = new GUIStyle();
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.white;
         s.padding = new RectOffset(1, 1, 1, 1);
-        s.fontStyle = FontStyle.Bold;
+        s.richText = true;
+        
         style_label = s;
+        style_emphasized = new GUIStyle(s);
+        style_emphasized.fontStyle = FontStyle.Bold;
+
         s = new GUIStyle(s);
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.grey;
         styles[0] = s;
         s = new GUIStyle(s);
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.yellow;
-        s.fontStyle = FontStyle.Bold;
         styles[1] = s;
         s = new GUIStyle(s);
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.red;
-        s.fontStyle = FontStyle.Bold;
         styles[2] = s;
-
+        
+        styles[1].fontStyle = styles[2].fontStyle = FontStyle.Bold;
         guiReady = true;
     }
 
@@ -331,7 +339,11 @@ public class DMFlightData : MonoBehaviour
         if (enabled == false) return;
         try
         {
+            GameObject o = RenderingManager.fetch.uiElementsToDisable.FirstOrDefault();
+            if (!o.activeSelf)
+                return;
             if (!FlightUIModeController.Instance.navBall.expanded || !FlightUIModeController.Instance.navBall.enabled) return;
+            
             switch (CameraManager.Instance.currentCameraMode)
             {
                 case CameraManager.CameraMode.IVA:
@@ -376,7 +388,7 @@ public class DMFlightData : MonoBehaviour
         GUILayout.BeginVertical();
         if (displayAtmosphericData)
         {
-            GUILayout.Label("Mach " + machNumber.ToString("F2"), style_label, opt);
+            GUILayout.Label("Mach " + machNumber.ToString("F2"), style_emphasized, opt);
             GUILayout.Label("Alt  " + FormatAltitude(altitude), style_label, opt);
             String intakeLabel = "Intake";
             if (airAvailability < 2d) intakeLabel += " "+(airAvailability*100d).ToString("F0") + "%";
@@ -396,12 +408,12 @@ public class DMFlightData : MonoBehaviour
             String timeLabel = "";
             switch (nextNode)
             {
-                case NextNode.Ap: timeLabel = "T_Ap- "; break;
-                case NextNode.Pe: timeLabel = "T_Pe- "; break;
+                case NextNode.Ap: timeLabel = "T<size=8>Ap</size> -"; break;
+                case NextNode.Pe: timeLabel = "T<size=8>Pe</size> -"; break;
             }
             GUILayout.Label(timeLabel + FormatTime(timeToNode), style_label, opt);
-            GUILayout.Label("Ap " + FormatAltitude(apoapsis), style_label, opt);
-            GUILayout.Label("Pe " + FormatAltitude(periapsis), style_label, opt);
+            GUILayout.Label("Ap " + FormatAltitude(apoapsis), nextNode==NextNode.Ap ? style_emphasized : style_label, opt);
+            GUILayout.Label("Pe " + FormatAltitude(periapsis), nextNode == NextNode.Pe ? style_emphasized : style_label, opt);
         }
         if (hasDRE)
         {
