@@ -37,11 +37,13 @@ public class DMFlightData : MonoBehaviour
     double altitude = 0;
     double timeToNode = 0;
     enum NextNode {
-        Ap, Pe
+        Ap, Pe, Escape, Maneuver, Encounter
     };
     NextNode nextNode = NextNode.Ap;
     double highestTemp = 0;
     double highestRelativeTemp = 0;
+    double dtSinceLastUpdate = 0;
+
     bool   displayOrbitalData = false;
     bool   displayAtmosphericData = false;
     bool   farDataIsObtainedOkay = true;
@@ -130,6 +132,7 @@ public class DMFlightData : MonoBehaviour
 	void Start()
     {
         LoadSettings();
+        dtSinceLastUpdate = Double.PositiveInfinity;
     }
 
 
@@ -145,6 +148,16 @@ public class DMFlightData : MonoBehaviour
 
         Vessel vessel = FlightGlobals.ActiveVessel;
         if (vessel == null) return;
+
+        if (dtSinceLastUpdate > 0.25) // update every 1/4 second
+        {
+            dtSinceLastUpdate = 0;
+        }
+        else
+        {
+            dtSinceLastUpdate += Time.deltaTime;
+            return;
+        }
 
         try
         {
@@ -199,15 +212,33 @@ public class DMFlightData : MonoBehaviour
         if (o != null && b != null)
         {
             periapsis = o.PeA;
-            apoapsis  = o.ApA;
-            if (o.timeToAp < o.timeToPe)
+            apoapsis = o.ApA;
+
+            double time = Planetarium.GetUniversalTime();
+            double timeToEnd = o.EndUT - time;
+            double timeToAp  = o.timeToAp;
+            double timeToPe  = o.timeToPe;
+
+            if (apoapsis < periapsis || timeToAp <= 0)
+                timeToAp = double.PositiveInfinity; // not gona happen
+            if (timeToPe <= 0)
+                timeToPe = double.PositiveInfinity;               
+
+            if (timeToEnd <= timeToPe && timeToEnd <= timeToAp && o.patchEndTransition != Orbit.PatchTransitionType.FINAL && o.patchEndTransition != Orbit.PatchTransitionType.INITIAL)
+            {
+                timeToNode = timeToEnd;
+                if (o.patchEndTransition == Orbit.PatchTransitionType.ESCAPE)    nextNode = NextNode.Escape;
+                else if (o.patchEndTransition == Orbit.PatchTransitionType.ENCOUNTER) nextNode = NextNode.Encounter;
+                else nextNode = NextNode.Maneuver;
+            }
+            else if (timeToAp < timeToPe)
             {
                 timeToNode = o.timeToAp;
                 nextNode   = NextNode.Ap;
             }
             else
             {
-                timeToNode = o.timeToPe;
+                timeToNode = timeToPe;
                 nextNode   = NextNode.Pe;
             }
 
@@ -220,16 +251,71 @@ public class DMFlightData : MonoBehaviour
                 displayOrbitalData = true;
    
             displayAtmosphericData &= b.atmosphere && vessel.altitude<b.maxAtmosphereAltitude;
+
+#if DEBUG
+            if (Input.GetKeyDown(KeyCode.O))
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("Game UT " + HighLogic.CurrentGame.UniversalTime);
+                sb.AppendLine("StartUT " + o.StartUT);
+                sb.AppendLine("EndUT " + o.EndUT);
+                sb.AppendLine("UTappr " + o.UTappr);
+                sb.AppendLine("UTsoi " + o.UTsoi);
+                sb.AppendLine("patchEndTransition " + o.patchEndTransition);
+                sb.AppendLine("patchStartTransition " + o.patchStartTransition);
+                sb.AppendLine("timeToAp " + o.timeToAp);
+                sb.AppendLine("timeToPe " + o.timeToPe);
+                sb.AppendLine("timeToTransition1 " + o.timeToTransition1);
+                sb.AppendLine("timeToTransition2 " + o.timeToTransition2);
+                sb.AppendLine("activePatch " + o.activePatch);
+                sb.AppendLine("altitude " + o.altitude);
+                sb.AppendLine("an " + o.an);
+                sb.AppendLine("ApA " + o.ApA);
+                sb.AppendLine("ApR " + o.ApR);
+                sb.AppendLine("argumentOfPeriapsis " + o.argumentOfPeriapsis);
+                sb.AppendLine("ClAppr " + o.ClAppr);
+                sb.AppendLine("ClEctr1 " + o.ClEctr1);
+                sb.AppendLine("ClEctr2 " + o.ClEctr2);
+                sb.AppendLine("CrAppr " + o.CrAppr);
+                sb.AppendLine("epoch " + o.epoch);
+                sb.AppendLine("FEVp " + o.FEVp);
+                sb.AppendLine("FEVs " + o.FEVs);
+                sb.AppendLine("fromE " + o.fromE);
+                sb.AppendLine("fromV " + o.fromV);
+                sb.AppendLine("h " + o.h);
+                sb.AppendLine("nearestTT " + o.nearestTT);
+                sb.AppendLine("nextTT " + o.nextTT);
+                sb.AppendLine("ObT " + o.ObT);
+                sb.AppendLine("ObTAtEpoch " + o.ObTAtEpoch);
+                sb.AppendLine("orbitPercent " + o.orbitPercent);
+                sb.AppendLine("PeA " + o.PeA);
+                sb.AppendLine("PeR " + o.PeR);
+                sb.AppendLine("period " + o.period);
+                sb.AppendLine("pos " + o.pos);
+                sb.AppendLine("radius " + o.radius);
+                sb.AppendLine("sampleInterval " + o.sampleInterval);
+                sb.AppendLine("secondaryPosAtTransition1 " + o.secondaryPosAtTransition1);
+                sb.AppendLine("secondaryPosAtTransition2 " + o.secondaryPosAtTransition2);
+                sb.AppendLine("semiLatusRectum " + o.semiLatusRectum);
+                sb.AppendLine("SEVp " + o.SEVp);
+                sb.AppendLine("SEVs " + o.SEVs);
+                sb.AppendLine("toE " + o.toE);
+                sb.AppendLine("toV " + o.toV);
+                sb.AppendLine("V " + o.V);
+                sb.AppendLine("vel " + o.vel);
+                Debug.Log(sb.ToString());
+            }
+#endif
         }
         altitude = vessel.altitude;
 
         if (hasDRE)
         {
-            highestTemp = 0;
-            highestRelativeTemp = 0;
+            highestTemp = double.NegativeInfinity;
+            highestRelativeTemp = double.NegativeInfinity;
             foreach (Part p in vessel.parts)
             {
-                if (p.temperature != 0) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
+                if (p.temperature != 0.1) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
                 {
                     highestTemp = Math.Max(p.temperature, highestTemp);
                     highestRelativeTemp = Math.Max(p.temperature/p.maxTemp, highestRelativeTemp);
@@ -246,6 +332,20 @@ public class DMFlightData : MonoBehaviour
     #endregion
 
     #region GUIUtil
+    protected static String FormatPressure(double x)
+    {
+        if (x > 1.0e6)
+        {
+            x *= 1.0e-6;
+            return x.ToString(x < 10 ? "F1" : "F0") + " MPa";
+        }
+        else
+        {
+            x *= 1.0e-3;
+            return x.ToString(x < 10 ? "F1" : "F0") + " kPa";
+        }
+    }
+
     protected static String FormatAltitude(double x)
     {
         double a = Math.Abs(x);
@@ -349,7 +449,8 @@ public class DMFlightData : MonoBehaviour
                 case CameraManager.CameraMode.IVA:
                     return;
             }
-            if (FlightGlobals.ActiveVessel.isEVA) return;
+            var vessel = FlightGlobals.ActiveVessel;
+            if (vessel.isEVA || vessel.state == Vessel.State.DEAD) return;
         }
         catch (NullReferenceException)
         {
@@ -391,9 +492,9 @@ public class DMFlightData : MonoBehaviour
             GUILayout.Label("Mach " + machNumber.ToString("F2"), style_emphasized, opt);
             GUILayout.Label("Alt  " + FormatAltitude(altitude), style_label, opt);
             String intakeLabel = "Intake";
-            if (airAvailability < 2d) intakeLabel += " "+(airAvailability*100d).ToString("F0") + "%";
+            if (airAvailability < 2d) intakeLabel += "  "+(airAvailability*100d).ToString("F0") + "%";
             GUILayout.Label(intakeLabel, styles[warnAir], opt);
-            GUILayout.Label("Q", styles[warnQ], opt);
+            GUILayout.Label("Q  " + FormatPressure(q), styles[warnQ], opt);
             GUILayout.Label("Stall", styles[warnStall], opt);
         }
         GUILayout.EndVertical();
@@ -410,10 +511,16 @@ public class DMFlightData : MonoBehaviour
             {
                 case NextNode.Ap: timeLabel = "T<size=8>Ap</size> -"; break;
                 case NextNode.Pe: timeLabel = "T<size=8>Pe</size> -"; break;
+                case NextNode.Encounter: timeLabel = "T<size=8>Enc</size> -"; break;
+                case NextNode.Maneuver: timeLabel = "T<size=8>Man</size> -"; break;
+                case NextNode.Escape: timeLabel = "T<size=8>Esc</size> -"; break;
             }
             GUILayout.Label(timeLabel + FormatTime(timeToNode), style_label, opt);
-            GUILayout.Label("Ap " + FormatAltitude(apoapsis), nextNode==NextNode.Ap ? style_emphasized : style_label, opt);
-            GUILayout.Label("Pe " + FormatAltitude(periapsis), nextNode == NextNode.Pe ? style_emphasized : style_label, opt);
+            if (nextNode == NextNode.Ap || nextNode == NextNode.Pe)
+            {
+                GUILayout.Label("Ap " + FormatAltitude(apoapsis), nextNode == NextNode.Ap ? style_emphasized : style_label, opt);
+                GUILayout.Label("Pe " + FormatAltitude(periapsis), nextNode == NextNode.Pe ? style_emphasized : style_label, opt);
+            }
         }
         if (hasDRE)
         {
