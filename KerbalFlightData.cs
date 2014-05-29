@@ -51,6 +51,10 @@ public class DMFlightData : MonoBehaviour
     bool hasDRE   = false;
     Type FARControlSys = null;
 
+    const double updateIntervall = 0.1;
+    int timeSecondsPerDay = 0;
+    int timeSecondsPerYear = 0;
+
     static Toolbar.IButton toolbarButton;
 
     #region Config & Data Acquisition
@@ -93,6 +97,21 @@ public class DMFlightData : MonoBehaviour
             {
                 hasDRE = true;
             }
+        }
+
+        if (GameSettings.KERBIN_TIME)
+        {
+            CelestialBody b = FlightGlobals.Bodies.Find((b_) => b_.name == "Kerbin");
+            timeSecondsPerDay  = (int)b.rotationPeriod;
+            timeSecondsPerYear = (int)b.orbit.period;
+            // when this fails an exception should be visible in the debug log and 
+            // the time to the next node display should show NaNs and Infs so it should
+            // be pretty clear when something goes wrong at this place
+        }
+        else
+        {
+            timeSecondsPerDay = 24 * 3600;
+            timeSecondsPerYear = timeSecondsPerDay * 365;
         }
 
         toolbarButton = Toolbar.ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
@@ -149,7 +168,7 @@ public class DMFlightData : MonoBehaviour
         Vessel vessel = FlightGlobals.ActiveVessel;
         if (vessel == null) return;
 
-        if (dtSinceLastUpdate > 0.25) // update every 1/4 second
+        if (dtSinceLastUpdate > updateIntervall) // update every so and so second
         {
             dtSinceLastUpdate = 0;
         }
@@ -367,12 +386,12 @@ public class DMFlightData : MonoBehaviour
         //}
     }
 
-    protected static String FormatTime(double x_)
+    protected String FormatTime(double x_)
     {
         const int MIN = 60;
-        const int H = MIN * 60;
-        const int D = H * 24;
-        const int Y = D * 365;
+        const int H   = 3600;
+        int D         = timeSecondsPerDay;
+        int Y         = timeSecondsPerYear;
 
         int x = (int)x_;
         int y, d, m, h, s;
@@ -390,13 +409,13 @@ public class DMFlightData : MonoBehaviour
         int idx = 0;
         if (y > 0)
             arr[idx++] = y.ToString()+"y";
-        if (d > 0)
+        if (d > 0 || idx>0)
             arr[idx++] = d.ToString()+"d";
-        if (h > 0 && idx<size)
+        if ((h > 0 || idx > 0) && idx < size)
             arr[idx++] = h.ToString()+"h";
-        if (m > 0 && idx<size)
+        if ((m > 0  || idx>0) && idx<size)
             arr[idx++] = m.ToString()+"m";
-        if (s > 0 && idx<size)
+        if ((s > 0  || idx>0) && idx<size)
             arr[idx++] = s.ToString()+"s"; 
         return string.Join(" ", arr, 0, idx);
     }
