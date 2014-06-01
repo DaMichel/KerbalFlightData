@@ -434,7 +434,13 @@ public class DMFlightData : MonoBehaviour
     protected static String FormatAltitude(double x)
     {
         double a = Math.Abs(x);
-        if (a > 1.0e6)
+        if (a >= 1.0e9)
+        {
+            x *= 1.0e-9;
+            a *= 1.0e-9;
+            return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Gm";
+        }
+        if (a >= 1.0e6)
         {
             x *= 1.0e-6;
             a *= 1.0e-6;
