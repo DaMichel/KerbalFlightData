@@ -21,6 +21,102 @@ using System.Reflection;
 using System.Linq;
 using System.Collections.Generic;
 
+#if DEBUG
+public class DMDebug
+{
+    StringBuilder sb = new StringBuilder();
+    //Dictionary visited = new Dictionary<UnityEngine.Object, String>();
+    HashSet<int> visited = new HashSet<int>(); //UnityEngine.Object
+
+    bool CheckAndAddVisited(UnityEngine.Object o)
+    {
+        int key = o.GetInstanceID();
+        if (visited.Contains(key)) return true;
+        visited.Add(key);
+        return false;
+    }
+
+    void Out(String s, int indent)
+    {
+        var indentStr = new String(' ', indent);
+        var arr = s.Split('\n');
+        foreach (String s_ in arr)
+        {
+            String tmp = s_.Trim('\n', '\r', ' ', '\t').Trim();
+            if (tmp.Length == 0) continue;
+            sb.AppendLine(indentStr + tmp);
+        }
+    }
+
+    bool IsInterestingType(Type typeToCheck)
+    {
+        var types = new Type[] {
+            typeof(UnityEngine.Component),
+            typeof(UnityEngine.GameObject),
+        };
+        foreach (Type t in types)
+        {
+            if(t.IsAssignableFrom(typeToCheck)) return true;
+        }
+        return false;
+    }
+
+    public void PrintHierarchy(UnityEngine.Object instance, int indent = 0)
+    {
+        try 
+        {
+        if (instance==null || CheckAndAddVisited(instance)) return;
+
+        var t = instance.GetType();
+        Out("+ " + instance.name + "(" + t.Name + ")", indent); //<" + instance.GetInstanceID() + ">"
+
+        foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public))
+        {   
+            var value = field.GetValue(instance);
+            Out(field.FieldType.Name + " " + field.Name + " = " + value, indent + 1);
+            if (IsInterestingType(field.FieldType))
+            {
+                PrintHierarchy((UnityEngine.Object)value, indent + 2);
+            }
+        }
+        foreach (var prop in t.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        {
+            object value = null; 
+            try {
+             value = prop.GetValue(instance, null);
+            } catch(Exception e) {
+             value = e.ToString();
+            }
+            Out(prop.PropertyType.Name + " " + prop.Name + " = " + value, indent + 1);
+            if (IsInterestingType(prop.PropertyType))
+            {
+                PrintHierarchy((UnityEngine.Object)value, indent + 2);
+            }
+        }
+
+        if (typeof(GameObject).IsAssignableFrom(t))
+        {
+            Out("[Components of "+instance.name+" ]", indent+1);
+            foreach (var comp in ((GameObject)instance).GetComponents<Component>())
+            {
+                PrintHierarchy(comp, indent+2);
+            }
+        }
+        }
+        catch (Exception e)
+        {
+            Out("Error: " + e.ToString(), indent);
+        }
+    }
+
+    public String ToString()
+    {
+        return sb.ToString();
+    }
+}
+#endif
+
+
 [KSPAddon(KSPAddon.Startup.Flight, false)]
 public class DMFlightData : MonoBehaviour
 {
@@ -44,12 +140,15 @@ public class DMFlightData : MonoBehaviour
     double highestRelativeTemp = 0;
     double dtSinceLastUpdate = 0;
 
+    float  uiScalingFactor = 1f;
+
     bool   displayOrbitalData = false;
     bool   displayAtmosphericData = false;
     bool   farDataIsObtainedOkay = true;
 
     bool hasDRE   = false;
     Type FARControlSys = null;
+    bool maneuverGUIActive = false;
 
     const double updateIntervall = 0.1;
     int timeSecondsPerDay = 0;
@@ -118,7 +217,6 @@ public class DMFlightData : MonoBehaviour
         toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
         toolbarButton.ToolTip = "KerbalFlightData On/Off Switch";
         toolbarButton.Visibility = new Toolbar.GameScenesVisibility(GameScenes.FLIGHT);
-        //toolbarButton.Visible = true;
         toolbarButton.Enabled = true;
         toolbarButton.OnClick += (e) =>
         {
@@ -168,7 +266,8 @@ public class DMFlightData : MonoBehaviour
         Vessel vessel = FlightGlobals.ActiveVessel;
         if (vessel == null) return;
 
-        if (dtSinceLastUpdate > updateIntervall) // update every so and so second
+#if !DEBUG
+        if (dtSinceLastUpdate > updateIntervall) // update every so and so fraction of a second
         {
             dtSinceLastUpdate = 0;
         }
@@ -177,6 +276,7 @@ public class DMFlightData : MonoBehaviour
             dtSinceLastUpdate += Time.deltaTime;
             return;
         }
+#endif 
 
         try
         {
@@ -274,55 +374,12 @@ public class DMFlightData : MonoBehaviour
 #if DEBUG
             if (Input.GetKeyDown(KeyCode.O))
             {
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("Game UT " + HighLogic.CurrentGame.UniversalTime);
-                sb.AppendLine("StartUT " + o.StartUT);
-                sb.AppendLine("EndUT " + o.EndUT);
-                sb.AppendLine("UTappr " + o.UTappr);
-                sb.AppendLine("UTsoi " + o.UTsoi);
-                sb.AppendLine("patchEndTransition " + o.patchEndTransition);
-                sb.AppendLine("patchStartTransition " + o.patchStartTransition);
-                sb.AppendLine("timeToAp " + o.timeToAp);
-                sb.AppendLine("timeToPe " + o.timeToPe);
-                sb.AppendLine("timeToTransition1 " + o.timeToTransition1);
-                sb.AppendLine("timeToTransition2 " + o.timeToTransition2);
-                sb.AppendLine("activePatch " + o.activePatch);
-                sb.AppendLine("altitude " + o.altitude);
-                sb.AppendLine("an " + o.an);
-                sb.AppendLine("ApA " + o.ApA);
-                sb.AppendLine("ApR " + o.ApR);
-                sb.AppendLine("argumentOfPeriapsis " + o.argumentOfPeriapsis);
-                sb.AppendLine("ClAppr " + o.ClAppr);
-                sb.AppendLine("ClEctr1 " + o.ClEctr1);
-                sb.AppendLine("ClEctr2 " + o.ClEctr2);
-                sb.AppendLine("CrAppr " + o.CrAppr);
-                sb.AppendLine("epoch " + o.epoch);
-                sb.AppendLine("FEVp " + o.FEVp);
-                sb.AppendLine("FEVs " + o.FEVs);
-                sb.AppendLine("fromE " + o.fromE);
-                sb.AppendLine("fromV " + o.fromV);
-                sb.AppendLine("h " + o.h);
-                sb.AppendLine("nearestTT " + o.nearestTT);
-                sb.AppendLine("nextTT " + o.nextTT);
-                sb.AppendLine("ObT " + o.ObT);
-                sb.AppendLine("ObTAtEpoch " + o.ObTAtEpoch);
-                sb.AppendLine("orbitPercent " + o.orbitPercent);
-                sb.AppendLine("PeA " + o.PeA);
-                sb.AppendLine("PeR " + o.PeR);
-                sb.AppendLine("period " + o.period);
-                sb.AppendLine("pos " + o.pos);
-                sb.AppendLine("radius " + o.radius);
-                sb.AppendLine("sampleInterval " + o.sampleInterval);
-                sb.AppendLine("secondaryPosAtTransition1 " + o.secondaryPosAtTransition1);
-                sb.AppendLine("secondaryPosAtTransition2 " + o.secondaryPosAtTransition2);
-                sb.AppendLine("semiLatusRectum " + o.semiLatusRectum);
-                sb.AppendLine("SEVp " + o.SEVp);
-                sb.AppendLine("SEVs " + o.SEVs);
-                sb.AppendLine("toE " + o.toE);
-                sb.AppendLine("toV " + o.toV);
-                sb.AppendLine("V " + o.V);
-                sb.AppendLine("vel " + o.vel);
-                Debug.Log(sb.ToString());
+                DMDebug dbg = new DMDebug();
+                dbg.PrintHierarchy(ScreenSafeUI.fetch);
+                dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"));
+                var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt");
+                f.Write(dbg.ToString());
+                f.Close();
             }
 #endif
         }
@@ -334,7 +391,7 @@ public class DMFlightData : MonoBehaviour
             highestRelativeTemp = double.NegativeInfinity;
             foreach (Part p in vessel.parts)
             {
-                if (p.temperature != 0.1) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
+                if (p.temperature != 0f) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
                 {
                     highestTemp = Math.Max(p.temperature, highestTemp);
                     highestRelativeTemp = Math.Max(p.temperature/p.maxTemp, highestRelativeTemp);
@@ -346,6 +403,15 @@ public class DMFlightData : MonoBehaviour
                 warnTemp = 1;
             else
                 warnTemp = 0;
+        }
+
+        // apparently this object is only sometimes available, that is when the burn gauge is shown.
+        // This nessesitates a search, every single time ...
+        maneuverGUIActive = false;
+        GameObject gauge = GameObject.Find("gauge_deltaV");
+        if (gauge)
+        {
+            maneuverGUIActive = gauge.activeSelf;
         }
     }
     #endregion
@@ -374,16 +440,12 @@ public class DMFlightData : MonoBehaviour
             a *= 1.0e-6;
             return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Mm";
         }
-        else //if (a > 1.0e3)
+        else
         {
             x *= 1.0e-3;
             a *= 1.0e-3;
             return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
         }
-        //else 
-        //{
-        //    return x.ToString("F0") + " m";
-        //}
     }
 
     protected String FormatTime(double x_)
@@ -429,6 +491,13 @@ public class DMFlightData : MonoBehaviour
 
     void SetupGUI()
     {
+        // how much the fonts and everything must be scaled relative to a
+        // reference GUI size (the normal KSP setting, i believe).
+        uiScalingFactor = 0.7f / ScreenSafeUI.referenceCam.orthographicSize;
+        if (Mathf.Abs(uiScalingFactor - 1f) < 0.1f) // less than 10% scaling -> no scaling to make the font look good.
+            uiScalingFactor = 1f; 
+
+        // GUI functions must only be called in OnGUI ...
         var s = new GUIStyle();
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.white;
         s.padding = new RectOffset(1, 1, 1, 1);
@@ -478,28 +547,40 @@ public class DMFlightData : MonoBehaviour
 
         if (!guiReady) SetupGUI();
 
+        // this is pretty messy but it has to work with different gui scaling factors.
         GUIStyle style = new GUIStyle();
         float height = 100f;
         float width  = 100f;
-        float pos_x = Screen.width * 0.5f + 114f;
-        float pos_y = Screen.height - height;
+        float offsetr = (maneuverGUIActive ? 220f : 114f) * uiScalingFactor;
+        float offsetl = 114f * uiScalingFactor;
+        float pos_x = Screen.width * 0.5f + offsetr;
+        float pos_y = Screen.height - height * uiScalingFactor;
+
+        GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
+
         GUI.Window(
             GUIUtility.GetControlID(FocusType.Passive),
-            new Rect(pos_x, pos_y, width, height),
+            new Rect(0, 0, width, height),
             this.DrawWindow1,
             GUIContent.none,
             style
         );
+        
 
         width = 100f;
-        pos_x = Screen.width * 0.5f - 114f - width;
+        pos_x = Screen.width * 0.5f - offsetl - width;
+
+        GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
+
         GUI.Window(
             GUIUtility.GetControlID(FocusType.Passive),
-            new Rect(pos_x, pos_y, width, height),
+            new Rect(0, 0, width, height),
             this.DrawWindow2,
             GUIContent.none,
             style
         );
+
+        GUI.matrix = Matrix4x4.identity;
     }
 
     protected void DrawWindow1(int windowId)
