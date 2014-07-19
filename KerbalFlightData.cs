@@ -61,7 +61,7 @@ public class DMDebug
         return false;
     }
 
-    public void PrintHierarchy(UnityEngine.Object instance, int indent = 0)
+    public void PrintHierarchy(UnityEngine.Object instance, int indent)
     {
         try 
         {
@@ -131,6 +131,7 @@ public class DMFlightData : MonoBehaviour
     double apoapsis = 0;
     double periapsis = 0;
     double altitude = 0;
+    double radarAltitude = 0;
     double timeToNode = 0;
     enum NextNode {
         Ap, Pe, Escape, Maneuver, Encounter
@@ -145,10 +146,12 @@ public class DMFlightData : MonoBehaviour
     bool   displayOrbitalData = false;
     bool   displayAtmosphericData = false;
     bool   farDataIsObtainedOkay = true;
+    bool   displayUI = true;
 
     bool hasDRE   = false;
     Type FARControlSys = null;
     bool maneuverGUIActive = false;
+    GameObject cachedManeuverNodeStuff = null;
 
     const double updateIntervall = 0.1;
     int timeSecondsPerDay = 0;
@@ -222,6 +225,16 @@ public class DMFlightData : MonoBehaviour
         {
             enabled = !enabled;
         };
+
+        GameEvents.onHideUI.Add(() => 
+        {
+            displayUI = false;
+        });
+
+        GameEvents.onShowUI.Add(() =>
+        {
+            displayUI = true;
+        });
     }
 
 
@@ -250,6 +263,9 @@ public class DMFlightData : MonoBehaviour
     {
         LoadSettings();
         dtSinceLastUpdate = Double.PositiveInfinity;
+
+        if (cachedManeuverNodeStuff == null)
+            cachedManeuverNodeStuff = GameObject.Find("gauge_deltaV");
     }
 
 
@@ -281,17 +297,15 @@ public class DMFlightData : MonoBehaviour
         try
         {
             UpdateFARData();
-            //machNumber      = ferram4.FARControlSys.activeMach;
-            //airAvailability = ferram4.FARControlSys.intakeDeficit;
-            //stallPercentage = ferram4.FARControlSys.stallPercentage;
-            //q               = ferram4.FARControlSys.q;
+            if (!farDataIsObtainedOkay)
+                Debug.LogWarning("DMFlightData: Data from FAR obtained successfully");
             farDataIsObtainedOkay = true;
         }
         catch (Exception e)
         {
             if (farDataIsObtainedOkay) // if it was obtained okay the last time
             {
-                Debug.Log("DMFlightData: "+e.ToString());
+                Debug.LogWarning("DMFlightData: " + e.ToString());
                 farDataIsObtainedOkay = false;
             }
             // otherwise remain silent!
@@ -375,15 +389,16 @@ public class DMFlightData : MonoBehaviour
             if (Input.GetKeyDown(KeyCode.O))
             {
                 DMDebug dbg = new DMDebug();
-                dbg.PrintHierarchy(ScreenSafeUI.fetch);
-                dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"));
-                var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt");
+                dbg.PrintHierarchy(ScreenSafeUI.fetch, 0);
+                dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"), 0);
+                var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
                 f.Write(dbg.ToString());
                 f.Close();
             }
 #endif
         }
         altitude = vessel.altitude;
+        radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
 
         if (hasDRE)
         {
@@ -405,14 +420,8 @@ public class DMFlightData : MonoBehaviour
                 warnTemp = 0;
         }
 
-        // apparently this object is only sometimes available, that is when the burn gauge is shown.
-        // This nessesitates a search, every single time ...
-        maneuverGUIActive = false;
-        GameObject gauge = GameObject.Find("gauge_deltaV");
-        if (gauge)
-        {
-            maneuverGUIActive = gauge.activeSelf;
-        }
+        if (cachedManeuverNodeStuff)
+            maneuverGUIActive = cachedManeuverNodeStuff.activeSelf;
     }
     #endregion
 
@@ -453,6 +462,23 @@ public class DMFlightData : MonoBehaviour
             return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
         }
     }
+
+
+    protected static String FormatRadarAltitude(double x)
+    {
+        double a = Math.Abs(x);
+        if (a >= 1.0e3)
+        {
+            x *= 1.0e-3;
+            a *= 1.0e-3;
+            return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
+        }
+        else
+        {
+            return x.ToString("F0") + " m";
+        }
+    }
+
 
     protected String FormatTime(double x_)
     {
@@ -530,26 +556,28 @@ public class DMFlightData : MonoBehaviour
 
     protected void OnGUI()
 	{
-        if (enabled == false) return;
-        try
+        if (!displayUI || !enabled) return;
+        //try
         {
-            GameObject o = RenderingManager.fetch.uiElementsToDisable.FirstOrDefault();
-            if (!o.activeSelf)
-                return;
+
             if (!FlightUIModeController.Instance.navBall.expanded || !FlightUIModeController.Instance.navBall.enabled) return;
-            
+
             switch (CameraManager.Instance.currentCameraMode)
             {
                 case CameraManager.CameraMode.IVA:
                     return;
             }
+
             var vessel = FlightGlobals.ActiveVessel;
+
             if (vessel.isEVA || vessel.state == Vessel.State.DEAD) return;
+
         }
-        catch (NullReferenceException)
-        {
-            return;
-        }
+        //catch (NullReferenceException)
+        //{
+        //    return;
+        //}
+
 
         if (!guiReady) SetupGUI();
 
@@ -596,7 +624,13 @@ public class DMFlightData : MonoBehaviour
         if (displayAtmosphericData)
         {
             GUILayout.Label("Mach " + machNumber.ToString("F2"), style_emphasized, opt);
-            GUILayout.Label("Alt  " + FormatAltitude(altitude), style_label, opt);
+        }        
+        if (radarAltitude < 5000)
+            GUILayout.Label("Alt " + FormatRadarAltitude(radarAltitude) + " AG", style_label, opt);
+        else
+            GUILayout.Label("Alt " + FormatAltitude(altitude) + " ASL", style_label, opt);
+        if (displayAtmosphericData)
+        {
             String intakeLabel = "Intake";
             if (airAvailability < 2d) intakeLabel += "  "+(airAvailability*100d).ToString("F0") + "%";
             GUILayout.Label(intakeLabel, styles[warnAir], opt);
