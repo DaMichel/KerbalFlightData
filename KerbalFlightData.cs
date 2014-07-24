@@ -21,9 +21,10 @@ using System.Reflection;
 using System.Linq;
 using System.Collections.Generic;
 
-#if DEBUG
+
 public class DMDebug
 {
+#if DEBUG
     StringBuilder sb = new StringBuilder();
     //Dictionary visited = new Dictionary<UnityEngine.Object, String>();
     HashSet<int> visited = new HashSet<int>(); //UnityEngine.Object
@@ -53,6 +54,10 @@ public class DMDebug
         var types = new Type[] {
             typeof(UnityEngine.Component),
             typeof(UnityEngine.GameObject),
+            typeof(UnityEngine.Renderer),
+            typeof(UnityEngine.Mesh),
+            typeof(UnityEngine.Material),
+            typeof(UnityEngine.Texture)
         };
         foreach (Type t in types)
         {
@@ -61,47 +66,54 @@ public class DMDebug
         return false;
     }
 
-    public void PrintHierarchy(UnityEngine.Object instance, int indent)
+    bool IsOkayToExpand(string name, Type type)
+    {
+        if (!IsInterestingType(type)) return false;
+        if (name == "parent" || name == "root" || name == "target") return false;
+        return true;
+    }
+
+    public void PrintHierarchy(UnityEngine.Object instance, int indent = 0)
     {
         try 
         {
-        if (instance==null || CheckAndAddVisited(instance)) return;
+            if (instance==null || CheckAndAddVisited(instance)) return;
 
-        var t = instance.GetType();
-        Out("+ " + instance.name + "(" + t.Name + ")", indent); //<" + instance.GetInstanceID() + ">"
+            var t = instance.GetType();
+            Out("+ " + instance.name + "(" + t.Name + ")", indent); //<" + instance.GetInstanceID() + ">"
 
-        foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public))
-        {   
-            var value = field.GetValue(instance);
-            Out(field.FieldType.Name + " " + field.Name + " = " + value, indent + 1);
-            if (IsInterestingType(field.FieldType))
+            foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public))
+            {   
+                var value = field.GetValue(instance);
+                Out(field.FieldType.Name + " " + field.Name + " = " + value, indent + 1);
+                if (IsOkayToExpand(field.Name, field.FieldType))
+                {
+                    PrintHierarchy((UnityEngine.Object)value, indent + 2);
+                }
+            }
+            foreach (var prop in t.GetProperties(BindingFlags.Instance | BindingFlags.Public))
             {
-                PrintHierarchy((UnityEngine.Object)value, indent + 2);
+                object value = null; 
+                try {
+                 value = prop.GetValue(instance, null);
+                } catch(Exception e) {
+                 value = e.ToString();
+                }
+                Out(prop.PropertyType.Name + " " + prop.Name + " = " + value, indent + 1);
+                if (IsOkayToExpand(prop.Name, prop.PropertyType))
+                {
+                    PrintHierarchy((UnityEngine.Object)value, indent + 2);
+                }
             }
-        }
-        foreach (var prop in t.GetProperties(BindingFlags.Instance | BindingFlags.Public))
-        {
-            object value = null; 
-            try {
-             value = prop.GetValue(instance, null);
-            } catch(Exception e) {
-             value = e.ToString();
-            }
-            Out(prop.PropertyType.Name + " " + prop.Name + " = " + value, indent + 1);
-            if (IsInterestingType(prop.PropertyType))
-            {
-                PrintHierarchy((UnityEngine.Object)value, indent + 2);
-            }
-        }
 
-        if (typeof(GameObject).IsAssignableFrom(t))
-        {
-            Out("[Components of "+instance.name+" ]", indent+1);
-            foreach (var comp in ((GameObject)instance).GetComponents<Component>())
+            if (typeof(GameObject).IsAssignableFrom(t))
             {
-                PrintHierarchy(comp, indent+2);
+                Out("[Components of "+instance.name+" ]", indent+1);
+                foreach (var comp in ((GameObject)instance).GetComponents<Component>())
+                {
+                    PrintHierarchy(comp, indent+2);
+                }
             }
-        }
         }
         catch (Exception e)
         {
@@ -113,8 +125,75 @@ public class DMDebug
     {
         return sb.ToString();
     }
-}
 #endif
+
+    public static void Log(string s)
+    {
+        Debug.Log("DMFlightData: "+s);
+    }
+
+    public static void LogWarning(string s)
+    {
+        Debug.LogWarning("DMFlightData: " + s);
+    }
+}
+
+
+public class GuiInfo
+{
+    NavBallBurnVector burnVector = null;
+
+    float navBallLeftBoundary;
+    float navBallRightBoundary;
+    float navBallRightBoundaryWithGauge;
+
+    public GuiInfo()
+    {
+        Update();
+    }
+
+    public void Update()
+    {        
+        DMDebug.Log("Update ");
+        ScreenSafeUI ui = ScreenSafeUI.fetch;
+        GameObject navballGameObject = GameObject.Find("NavBall");
+        GameObject maneuverVectorGameObject = GameObject.Find("maneuverVector");
+        burnVector = maneuverVectorGameObject.GetComponent<NavBallBurnVector>();
+        Camera cam = ScreenSafeUI.referenceCam;
+
+        float navballWidth = 0.07f;
+        float navballWidthWithGauge = 0.12f;
+
+        Vector3 p = cam.WorldToScreenPoint(navballGameObject.transform.position);
+        Vector3 p2 = cam.WorldToScreenPoint(navballGameObject.transform.localToWorldMatrix.MultiplyPoint(new Vector3(navballWidth, 0, 0)));
+        Vector3 p3 = cam.WorldToScreenPoint(navballGameObject.transform.localToWorldMatrix.MultiplyPoint(new Vector3(navballWidthWithGauge, 0, 0)));
+        navBallRightBoundary = p2.x;
+        navBallLeftBoundary = p.x - (p2.x - p.x);
+        navBallRightBoundaryWithGauge = p3.x;
+
+        ui.centerAnchor.bottom.hasChanged = false; // this is probably not a good idea. It will break things that also use the hasChanged flag ...
+    }
+
+    public bool hasChanged
+    {
+        get { return ScreenSafeUI.fetch.centerAnchor.bottom.hasChanged; }
+    }
+
+    public bool showGauge
+    {
+        get { return burnVector.deltaVGauge != null && burnVector.deltaVGauge.gameObject.activeSelf == true; }
+    }
+
+    public float screenAnchorLeft
+    {
+        get { return navBallLeftBoundary; }
+    }
+
+    public float screenAnchorRight
+    {
+        get { return showGauge ? navBallRightBoundaryWithGauge : navBallRightBoundary; }
+    }
+}
 
 
 [KSPAddon(KSPAddon.Startup.Flight, false)]
@@ -150,8 +229,7 @@ public class DMFlightData : MonoBehaviour
 
     bool hasDRE   = false;
     Type FARControlSys = null;
-    bool maneuverGUIActive = false;
-    GameObject cachedManeuverNodeStuff = null;
+    GuiInfo guiInfo = null;
 
     const double updateIntervall = 0.1;
     int timeSecondsPerDay = 0;
@@ -179,16 +257,16 @@ public class DMFlightData : MonoBehaviour
 
     void Awake()
     {
-        //Debug.Log("DMFlightData Awake");
+        //DMDebug.Log("DMFlightData Awake");
         foreach (var assembly in AssemblyLoader.loadedAssemblies)
         {
-            //Debug.Log(assembly.name);
+            //DMDebug.Log(assembly.name);
             if (assembly.name == "FerramAerospaceResearch")
             {
                 var types = assembly.assembly.GetExportedTypes(); 
                 foreach (Type t in types)
                 {
-                    //Debug.Log(t.FullName);
+                    //DMDebug.Log(t.FullName);
                     if (t.FullName.Equals("ferram4.FARControlSys")) 
                     {
                         FARControlSys = t;
@@ -215,6 +293,8 @@ public class DMFlightData : MonoBehaviour
             timeSecondsPerDay = 24 * 3600;
             timeSecondsPerYear = timeSecondsPerDay * 365;
         }
+
+        guiInfo = new GuiInfo();
 
         toolbarButton = Toolbar.ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
         toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
@@ -262,10 +342,8 @@ public class DMFlightData : MonoBehaviour
 	void Start()
     {
         LoadSettings();
-        dtSinceLastUpdate = Double.PositiveInfinity;
 
-        if (cachedManeuverNodeStuff == null)
-            cachedManeuverNodeStuff = GameObject.Find("gauge_deltaV");
+        dtSinceLastUpdate = Double.PositiveInfinity;
     }
 
 
@@ -277,7 +355,11 @@ public class DMFlightData : MonoBehaviour
 
     void LateUpdate()
     {
+        if (guiInfo.hasChanged)
+            guiInfo.Update();
+
         if (enabled == false) return;
+        if (!FlightGlobals.ready) return;
 
         Vessel vessel = FlightGlobals.ActiveVessel;
         if (vessel == null) return;
@@ -298,14 +380,14 @@ public class DMFlightData : MonoBehaviour
         {
             UpdateFARData();
             if (!farDataIsObtainedOkay)
-                Debug.LogWarning("DMFlightData: Data from FAR obtained successfully");
+                DMDebug.Log("Data from FAR obtained successfully");
             farDataIsObtainedOkay = true;
         }
         catch (Exception e)
         {
             if (farDataIsObtainedOkay) // if it was obtained okay the last time
             {
-                Debug.LogWarning("DMFlightData: " + e.ToString());
+                DMDebug.Log(e.ToString());
                 farDataIsObtainedOkay = false;
             }
             // otherwise remain silent!
@@ -386,11 +468,18 @@ public class DMFlightData : MonoBehaviour
             displayAtmosphericData &= b.atmosphere && vessel.altitude<b.maxAtmosphereAltitude;
 
 #if DEBUG
+            if (Input.GetKeyDown(KeyCode.I))
+            {
+                guiInfo = new GuiInfo();
+            }
             if (Input.GetKeyDown(KeyCode.O))
             {
                 DMDebug dbg = new DMDebug();
-                dbg.PrintHierarchy(ScreenSafeUI.fetch, 0);
-                dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"), 0);
+                //dbg.PrintHierarchy(ScreenSafeUI.fetch);
+                //dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"));
+                //dbg.PrintHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom);
+                //dbg.PrintHierarchy(GameObject.Find("NavBall"));
+                dbg.PrintHierarchy(GameObject.Find("maneuverVector"));
                 var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
                 f.Write(dbg.ToString());
                 f.Close();
@@ -419,9 +508,6 @@ public class DMFlightData : MonoBehaviour
             else
                 warnTemp = 0;
         }
-
-        if (cachedManeuverNodeStuff)
-            maneuverGUIActive = cachedManeuverNodeStuff.activeSelf;
     }
     #endregion
 
@@ -556,8 +642,7 @@ public class DMFlightData : MonoBehaviour
 
     protected void OnGUI()
 	{
-        if (!displayUI || !enabled) return;
-        //try
+        if (!displayUI || !enabled || !FlightGlobals.ready) return;
         {
 
             if (!FlightUIModeController.Instance.navBall.expanded || !FlightUIModeController.Instance.navBall.enabled) return;
@@ -571,23 +656,15 @@ public class DMFlightData : MonoBehaviour
             var vessel = FlightGlobals.ActiveVessel;
 
             if (vessel.isEVA || vessel.state == Vessel.State.DEAD) return;
-
         }
-        //catch (NullReferenceException)
-        //{
-        //    return;
-        //}
 
-
-        if (!guiReady) SetupGUI();
+        if (!guiReady || guiInfo == null) SetupGUI();
 
         // this is pretty messy but it has to work with different gui scaling factors.
         GUIStyle style = new GUIStyle();
         float height = 100f;
         float width  = 100f;
-        float offsetr = (maneuverGUIActive ? 220f : 114f) * uiScalingFactor;
-        float offsetl = 114f * uiScalingFactor;
-        float pos_x = Screen.width * 0.5f + offsetr;
+        float pos_x = guiInfo.screenAnchorRight;
         float pos_y = Screen.height - height * uiScalingFactor;
 
         GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
@@ -601,8 +678,8 @@ public class DMFlightData : MonoBehaviour
         );
         
 
-        width = 100f;
-        pos_x = Screen.width * 0.5f - offsetl - width;
+        width = 90f;
+        pos_x = guiInfo.screenAnchorLeft - width;
 
         GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
 
