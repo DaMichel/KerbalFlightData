@@ -612,6 +612,10 @@ public class DMFlightData : MonoBehaviour
     GUIStyle style_label = null;
     GUIStyle style_emphasized = null;
     bool guiReady = false;
+    float estimatedWindowHeight1 = 100f;
+    float estimatedWindowHeight2 = 100f;
+    const float fontHeight = 16f; // hardcoding this is probably a bad idea. Problem is how to obtain that by code?
+    const float windowBottomOffset = 5f;
 
     void SetupGUI()
     {
@@ -664,10 +668,10 @@ public class DMFlightData : MonoBehaviour
 
         // this is pretty messy but it has to work with different gui scaling factors.
         GUIStyle style = new GUIStyle();
-        float height = 100f;
-        float width  = 100f;
+        float width = 100f;
+        float height = estimatedWindowHeight1;
         float pos_x = guiInfo.screenAnchorRight;
-        float pos_y = Screen.height - height * uiScalingFactor;
+        float pos_y = Screen.height - (height + windowBottomOffset) * uiScalingFactor;
 
         GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
 
@@ -678,10 +682,11 @@ public class DMFlightData : MonoBehaviour
             GUIContent.none,
             style
         );
-        
 
         width = 90f;
+        height = estimatedWindowHeight2;
         pos_x = guiInfo.screenAnchorLeft - width;
+        pos_y = Screen.height - (height + windowBottomOffset) * uiScalingFactor;
 
         GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
 
@@ -698,16 +703,24 @@ public class DMFlightData : MonoBehaviour
 
     protected void DrawWindow1(int windowId)
     {
+        estimatedWindowHeight1 = 0f;
         GUILayoutOption opt = GUILayout.ExpandWidth(true);
         GUILayout.BeginVertical();
         if (displayAtmosphericData)
         {
             GUILayout.Label("Mach " + machNumber.ToString("F2"), style_emphasized, opt);
+            estimatedWindowHeight1 += 1;
         }        
         if (radarAltitude < 5000)
+        {
             GUILayout.Label("Alt " + FormatRadarAltitude(radarAltitude) + " R", style_label, opt);
+            estimatedWindowHeight1 += 1;
+        }
         else
+        {
             GUILayout.Label("Alt " + FormatAltitude(altitude), style_label, opt);
+            estimatedWindowHeight1 += 1;
+        }
         if (displayAtmosphericData)
         {
             String intakeLabel = "Intake";
@@ -715,12 +728,15 @@ public class DMFlightData : MonoBehaviour
             GUILayout.Label(intakeLabel, styles[warnAir], opt);
             GUILayout.Label("Q  " + FormatPressure(q), styles[warnQ], opt);
             GUILayout.Label("Stall", styles[warnStall], opt);
+            estimatedWindowHeight1 += 4;
         }
         GUILayout.EndVertical();
+        estimatedWindowHeight1 *= fontHeight;
     }
 
     protected void DrawWindow2(int windowId)
     {
+        estimatedWindowHeight2 = 0;
         GUILayoutOption opt = GUILayout.ExpandWidth(true);
         GUILayout.BeginVertical();
         if (displayOrbitalData)
@@ -735,17 +751,21 @@ public class DMFlightData : MonoBehaviour
                 case NextNode.Escape: timeLabel = "T<size=8>Esc</size> -"; break;
             }
             GUILayout.Label(timeLabel + FormatTime(timeToNode), style_label, opt);
+            estimatedWindowHeight2 += 1;
             if (nextNode == NextNode.Ap || nextNode == NextNode.Pe)
             {
                 GUILayout.Label("Ap " + FormatAltitude(apoapsis), nextNode == NextNode.Ap ? style_emphasized : style_label, opt);
                 GUILayout.Label("Pe " + FormatAltitude(periapsis), nextNode == NextNode.Pe ? style_emphasized : style_label, opt);
+                estimatedWindowHeight2 += 2;
             }
         }
         if (hasDRE)
         {
             GUILayout.Label("T " + highestTemp.ToString("F0") + " °C", styles[warnTemp], opt);
+            estimatedWindowHeight2 += 1;
         }
         GUILayout.EndVertical();
+        estimatedWindowHeight2 *= fontHeight;
     }
     #endregion
 }
