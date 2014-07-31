@@ -226,6 +226,7 @@ public class DMFlightData : MonoBehaviour
     bool   displayAtmosphericData = false;
     bool   farDataIsObtainedOkay = true;
     bool   displayUI = true;
+    bool   displayUIByGuiEvent = true;
 
     bool hasDRE   = false;
     Type FARControlSys = null;
@@ -308,12 +309,12 @@ public class DMFlightData : MonoBehaviour
 
         GameEvents.onHideUI.Add(() => 
         {
-            displayUI = false;
+            displayUIByGuiEvent = false;
         });
 
         GameEvents.onShowUI.Add(() =>
         {
-            displayUI = true;
+            displayUIByGuiEvent = true;
         });
     }
 
@@ -355,15 +356,6 @@ public class DMFlightData : MonoBehaviour
 
     void LateUpdate()
     {
-        if (guiInfo.hasChanged)
-            guiInfo.Update();
-
-        if (enabled == false) return;
-        if (!FlightGlobals.ready) return;
-
-        Vessel vessel = FlightGlobals.ActiveVessel;
-        if (vessel == null) return;
-
 #if !DEBUG
         if (dtSinceLastUpdate > updateIntervall) // update every so and so fraction of a second
         {
@@ -375,6 +367,20 @@ public class DMFlightData : MonoBehaviour
             return;
         }
 #endif 
+        if (guiInfo.hasChanged)
+            guiInfo.Update();
+
+        displayUI = false; // don't show anything unless some stuff is all right
+        if (!FlightGlobals.ready) return;
+
+        Vessel vessel = FlightGlobals.ActiveVessel;
+        if (vessel == null) return;
+
+        if (vessel.isEVA || vessel.state == Vessel.State.DEAD)
+        {
+            return;
+        }
+        else displayUI = true; // at this point something should probably be shown
 
         try
         {
@@ -642,7 +648,7 @@ public class DMFlightData : MonoBehaviour
 
     protected void OnGUI()
 	{
-        if (!displayUI || !enabled || !FlightGlobals.ready) return;
+        if (!displayUI || !displayUIByGuiEvent) return;
         {
 
             if (!FlightUIModeController.Instance.navBall.expanded || !FlightUIModeController.Instance.navBall.enabled) return;
@@ -652,13 +658,9 @@ public class DMFlightData : MonoBehaviour
                 case CameraManager.CameraMode.IVA:
                     return;
             }
-
-            var vessel = FlightGlobals.ActiveVessel;
-
-            if (vessel.isEVA || vessel.state == Vessel.State.DEAD) return;
         }
 
-        if (!guiReady || guiInfo == null) SetupGUI();
+        if (!guiReady) SetupGUI();
 
         // this is pretty messy but it has to work with different gui scaling factors.
         GUIStyle style = new GUIStyle();
@@ -703,9 +705,9 @@ public class DMFlightData : MonoBehaviour
             GUILayout.Label("Mach " + machNumber.ToString("F2"), style_emphasized, opt);
         }        
         if (radarAltitude < 5000)
-            GUILayout.Label("Alt " + FormatRadarAltitude(radarAltitude) + " AG", style_label, opt);
+            GUILayout.Label("Alt " + FormatRadarAltitude(radarAltitude) + " R", style_label, opt);
         else
-            GUILayout.Label("Alt " + FormatAltitude(altitude) + " ASL", style_label, opt);
+            GUILayout.Label("Alt " + FormatAltitude(altitude), style_label, opt);
         if (displayAtmosphericData)
         {
             String intakeLabel = "Intake";
