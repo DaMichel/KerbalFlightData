@@ -139,6 +139,296 @@ public class DMDebug
 }
 
 
+public class Data
+{
+    public double machNumber;
+    public double airAvailability;
+    public double stallPercentage;
+    public double q;
+    public bool hasAirAvailability = false;
+    public bool hasAerodynamics = false; // mach, stall, q
+
+    public int warnQ;
+    public int warnStall;
+    public int warnAir;
+    public int warnTemp;
+
+    public double apoapsis = 0;
+    public double periapsis = 0;
+    public double timeToNode = 0;
+    public enum NextNode
+    {
+        Ap, Pe, Escape, Maneuver, Encounter
+    };
+    public NextNode nextNode = NextNode.Ap;
+
+    public bool isAtmosphericLowLevelFlight;
+    public bool isInAtmosphere;
+
+    public double altitude = 0;
+    public double radarAltitude = 0;
+
+    public double highestTemp = 0;
+    public double highestRelativeTemp = 0;
+    public bool hasTemp = false;
+};
+
+
+abstract class DataSource
+{
+    public abstract void Update(Data data, Vessel vessel);
+};
+
+
+class DataFAR : DataSource
+{
+    private Type FARControlSys = null;
+    private bool farDataIsObtainedOkay = true;
+
+    public DataFAR(Type FARControlSys_) : base()
+    {
+        FARControlSys = FARControlSys_;
+    }
+
+    void GetFARData(Data data)
+    {
+        var instance = FARControlSys.GetField("activeControlSys", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
+        foreach (var field in FARControlSys.GetFields(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public))
+        {
+            if (field.Name == "q")
+                data.q = (double)field.GetValue(instance);
+            else if (field.Name == "MachNumber")
+                data.machNumber = (double)field.GetValue(instance);
+            else if (field.Name == "intakeDeficit")
+                data.airAvailability = (double)field.GetValue(null);
+            else if (field.Name == "stallPercentage")
+                data.stallPercentage = (double)field.GetValue(null);
+        }
+        data.hasAerodynamics = true;
+        data.hasAirAvailability = true;
+    }
+
+    public override void Update(Data data, Vessel vessel)
+    {
+        try
+        {
+            GetFARData(data);
+            if (!farDataIsObtainedOkay)
+                DMDebug.Log("Data from FAR obtained successfully");
+            farDataIsObtainedOkay = true;
+        }
+        catch (Exception e)
+        {
+            if (farDataIsObtainedOkay) // if it was obtained okay the last time
+            {
+                DMDebug.Log(e.ToString());
+                farDataIsObtainedOkay = false;
+            }
+            // otherwise remain silent!
+            // ... but set error flags
+            data.hasAerodynamics = false;
+            data.hasAirAvailability = false;
+        }
+    }
+};
+
+
+class DataIntakeAirStock : DataSource
+{
+    public override void Update(Data data, Vessel vessel)
+    {
+        data.hasAirAvailability = data.isInAtmosphere;
+        if (!data.hasAirAvailability) return;
+
+        double airDemand = 0;
+        double airAvailable = 0;
+
+        double fixedDeltaTime = TimeWarp.fixedDeltaTime;
+        PartResourceLibrary l = PartResourceLibrary.Instance;
+        foreach (Part p in vessel.parts)
+        {
+            if (p == null)
+                continue;
+            foreach (PartModule m in p.Modules)
+            {
+                if (m is ModuleEngines)
+                {
+                    ModuleEngines e = m as ModuleEngines;
+                    if (e.EngineIgnited && !e.engineShutdown)
+                    {
+                        foreach (Propellant v in e.propellants)
+                        {
+                            string propName = v.name;
+                            PartResourceDefinition r = l.resourceDefinitions[propName];
+                            if (propName == "IntakeAir")
+                            {
+                                airDemand += v.currentRequirement;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                else if (m is ModuleEnginesFX)
+                {
+                    ModuleEnginesFX e = m as ModuleEnginesFX;
+                    if (e.EngineIgnited && !e.engineShutdown)
+                    {
+                        foreach (Propellant v in e.propellants)
+                        {
+                            string propName = v.name;
+                            PartResourceDefinition r = l.resourceDefinitions[propName];
+                            if (propName == "IntakeAir")
+                            {
+                                airDemand += v.currentRequirement;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                else if (m is ModuleResourceIntake)
+                {
+                    ModuleResourceIntake i = m as ModuleResourceIntake;
+                    if (i.intakeEnabled)
+                    {
+                        airAvailable += i.airFlow * fixedDeltaTime;
+                    }
+                }
+            }
+        }
+        data.airAvailability = airAvailable / airDemand;
+        data.hasAirAvailability = true;
+    }
+};
+
+
+
+class DataSetupWarnings : DataSource
+{
+    public override void Update(Data data, Vessel vessel)
+    {
+        if (data.hasAerodynamics)
+        {
+            if (data.q < 10)
+            {
+                data.warnQ = 0;
+                data.warnStall = 0;
+            }
+            else
+            {
+                if (data.q > 40000)
+                    data.warnQ = 1;
+                else
+                    data.warnQ = 0;
+
+                if (data.stallPercentage > 0.5)
+                    data.warnStall = 2;
+                else if (data.stallPercentage > 0.005)
+                    data.warnStall = 1;
+                else
+                    data.warnStall = 0;
+            }
+        }
+        if (data.hasAirAvailability)
+        {
+            if (data.airAvailability < 1.05)
+                data.warnAir = 2;
+            else if (data.airAvailability < 1.5)
+                data.warnAir = 1;
+            else
+                data.warnAir = 0;
+        }
+        if (data.hasTemp)
+        {
+            if (data.highestRelativeTemp > 0.95)
+                data.warnTemp = 2;
+            else if (data.highestRelativeTemp > 0.8)
+                data.warnTemp = 1;
+            else
+                data.warnTemp = 0;
+        }
+    }
+}
+
+
+
+class DataOrbitAndAltitude : DataSource
+{
+    public override void Update(Data data, Vessel vessel)
+    {
+        Orbit o = vessel.orbit;
+        CelestialBody b = vessel.mainBody;
+
+        if (o != null && b != null)
+        {
+            data.periapsis = o.PeA;
+            data.apoapsis = o.ApA;
+
+            double time = Planetarium.GetUniversalTime();
+            double timeToEnd = o.EndUT - time;
+            double timeToAp = o.timeToAp;
+            double timeToPe = o.timeToPe;
+
+            if (data.apoapsis < data.periapsis || timeToAp <= 0)
+                timeToAp = double.PositiveInfinity; // not gona happen
+            if (timeToPe <= 0)
+                timeToPe = double.PositiveInfinity;
+
+            if (timeToEnd <= timeToPe && timeToEnd <= timeToAp && o.patchEndTransition != Orbit.PatchTransitionType.FINAL && o.patchEndTransition != Orbit.PatchTransitionType.INITIAL)
+            {
+                data.timeToNode = timeToEnd;
+                if (o.patchEndTransition == Orbit.PatchTransitionType.ESCAPE) data.nextNode = Data.NextNode.Escape;
+                else if (o.patchEndTransition == Orbit.PatchTransitionType.ENCOUNTER) data.nextNode = Data.NextNode.Encounter;
+                else data.nextNode = Data.NextNode.Maneuver;
+            }
+            else if (timeToAp < timeToPe)
+            {
+                data.timeToNode = o.timeToAp;
+                data.nextNode = Data.NextNode.Ap;
+            }
+            else
+            {
+                data.timeToNode = timeToPe;
+                data.nextNode = Data.NextNode.Pe;
+            }
+
+            if (b.atmosphere)
+            {
+                double hmin = (double)(((int)(b.maxAtmosphereAltitude * 0.33333333e-3))) * 1000;
+                data.isAtmosphericLowLevelFlight = !(data.apoapsis > hmin || data.periapsis > hmin);
+            }
+            else
+                data.isAtmosphericLowLevelFlight = false;
+            data.isInAtmosphere = b.atmosphere && vessel.altitude < b.maxAtmosphereAltitude;
+        }
+        data.altitude = vessel.altitude;
+        data.radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
+    }
+}
+
+
+
+class DataTemperature : DataSource
+{
+    public override void Update(Data data, Vessel vessel)
+    {
+        data.hasTemp = data.isInAtmosphere;
+        if (!data.hasTemp) return;
+
+        data.highestTemp = double.NegativeInfinity;
+        data.highestRelativeTemp = double.NegativeInfinity;
+        foreach (Part p in vessel.parts)
+        {
+            if (p.temperature != 0f) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
+            {
+                data.highestTemp = Math.Max(p.temperature, data.highestTemp);
+                data.highestRelativeTemp = Math.Max(p.temperature / p.maxTemp, data.highestRelativeTemp);
+            }
+        }
+    }
+}
+
+
+
 public class GuiInfo
 {
     NavBallBurnVector burnVector = null;
@@ -154,7 +444,6 @@ public class GuiInfo
 
     public void Update()
     {        
-        DMDebug.Log("Update ");
         ScreenSafeUI ui = ScreenSafeUI.fetch;
         GameObject navballGameObject = GameObject.Find("NavBall");
         GameObject maneuverVectorGameObject = GameObject.Find("maneuverVector");
@@ -199,66 +488,29 @@ public class GuiInfo
 [KSPAddon(KSPAddon.Startup.Flight, false)]
 public class DMFlightData : MonoBehaviour
 {
-    double machNumber;
-    double airAvailability;
-    double stallPercentage;
-    double q;
-    int    warnQ = 0;
-    int    warnStall = 0;
-    int    warnAir = 0;
-    int    warnTemp = 0;
-    double apoapsis = 0;
-    double periapsis = 0;
-    double altitude = 0;
-    double radarAltitude = 0;
-    double timeToNode = 0;
-    enum NextNode {
-        Ap, Pe, Escape, Maneuver, Encounter
-    };
-    NextNode nextNode = NextNode.Ap;
-    double highestTemp = 0;
-    double highestRelativeTemp = 0;
+    const double updateIntervall = 0.1;
     double dtSinceLastUpdate = 0;
-
-    float  uiScalingFactor = 1f;
-
-    bool   displayOrbitalData = false;
-    bool   displayAtmosphericData = false;
-    bool   farDataIsObtainedOkay = true;
+        
     bool   displayUI = true;
     bool   displayUIByGuiEvent = true;
 
-    bool hasDRE   = false;
-    Type FARControlSys = null;
+    Data data;
+    List<DataSource> dataSources = new List<DataSource>();
+
     GuiInfo guiInfo = null;
 
-    const double updateIntervall = 0.1;
     int timeSecondsPerDay = 0;
     int timeSecondsPerYear = 0;
 
     static Toolbar.IButton toolbarButton;
 
     #region Config & Data Acquisition
-    void UpdateFARData()
-    {
-        var instance = FARControlSys.GetField("activeControlSys", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
-        foreach (var field in FARControlSys.GetFields(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public))
-        {
-            if (field.Name == "q")
-                q = (double)field.GetValue(instance);
-            else if (field.Name == "MachNumber")
-                machNumber = (double)field.GetValue(instance);
-            else if (field.Name == "intakeDeficit")
-                airAvailability = (double)field.GetValue(null);
-            else if (field.Name == "stallPercentage")
-                stallPercentage = (double)field.GetValue(null);
-        }
-    }
-
 
     void Awake()
     {
+        dataSources.Clear();
         //DMDebug.Log("DMFlightData Awake");
+        bool hasFar = false;
         foreach (var assembly in AssemblyLoader.loadedAssemblies)
         {
             //DMDebug.Log(assembly.name);
@@ -270,15 +522,22 @@ public class DMFlightData : MonoBehaviour
                     //DMDebug.Log(t.FullName);
                     if (t.FullName.Equals("ferram4.FARControlSys")) 
                     {
-                        FARControlSys = t;
+                        dataSources.Add(new DataFAR(t));
+                        hasFar = true;
                     }
                 }
             }
             if (assembly.name == "DeadlyReentry")
             {
-                hasDRE = true;
+                dataSources.Add(new DataTemperature());
             }
         }
+        if (hasFar == false)
+            dataSources.Add(new DataIntakeAirStock());
+        dataSources.Add(new DataOrbitAndAltitude());
+        dataSources.Add(new DataSetupWarnings());
+
+        data = new Data();
 
         if (GameSettings.KERBIN_TIME)
         {
@@ -382,96 +641,10 @@ public class DMFlightData : MonoBehaviour
         }
         else displayUI = true; // at this point something should probably be shown
 
-        try
+        foreach (DataSource d in dataSources)
         {
-            UpdateFARData();
-            if (!farDataIsObtainedOkay)
-                DMDebug.Log("Data from FAR obtained successfully");
-            farDataIsObtainedOkay = true;
+            d.Update(data, vessel);
         }
-        catch (Exception e)
-        {
-            if (farDataIsObtainedOkay) // if it was obtained okay the last time
-            {
-                DMDebug.Log(e.ToString());
-                farDataIsObtainedOkay = false;
-            }
-            // otherwise remain silent!
-        }
-
-        if (q < 10)
-        {
-            warnQ = 0;
-            warnStall = 0;
-        }
-        else
-        {
-            if (q > 40000)
-                warnQ = 1;
-            else 
-                warnQ = 0;
-
-            if (stallPercentage > 0.5)
-                warnStall = 2;
-            else if (stallPercentage > 0.005)
-                warnStall = 1;
-            else
-                warnStall = 0;
-        }
-        if (airAvailability < 1.05)
-            warnAir = 2;
-        else if (airAvailability < 1.5)
-            warnAir = 1;
-        else
-            warnAir = 0;
-        
-        Orbit o = vessel.orbit;
-        CelestialBody b = vessel.mainBody;
-
-        displayAtmosphericData = farDataIsObtainedOkay;
-        displayOrbitalData = false;
-        if (o != null && b != null)
-        {
-            periapsis = o.PeA;
-            apoapsis = o.ApA;
-
-            double time = Planetarium.GetUniversalTime();
-            double timeToEnd = o.EndUT - time;
-            double timeToAp  = o.timeToAp;
-            double timeToPe  = o.timeToPe;
-
-            if (apoapsis < periapsis || timeToAp <= 0)
-                timeToAp = double.PositiveInfinity; // not gona happen
-            if (timeToPe <= 0)
-                timeToPe = double.PositiveInfinity;               
-
-            if (timeToEnd <= timeToPe && timeToEnd <= timeToAp && o.patchEndTransition != Orbit.PatchTransitionType.FINAL && o.patchEndTransition != Orbit.PatchTransitionType.INITIAL)
-            {
-                timeToNode = timeToEnd;
-                if (o.patchEndTransition == Orbit.PatchTransitionType.ESCAPE)    nextNode = NextNode.Escape;
-                else if (o.patchEndTransition == Orbit.PatchTransitionType.ENCOUNTER) nextNode = NextNode.Encounter;
-                else nextNode = NextNode.Maneuver;
-            }
-            else if (timeToAp < timeToPe)
-            {
-                timeToNode = o.timeToAp;
-                nextNode   = NextNode.Ap;
-            }
-            else
-            {
-                timeToNode = timeToPe;
-                nextNode   = NextNode.Pe;
-            }
-
-            if (b.atmosphere)
-            {
-                double hmin = (double)(((int)(b.maxAtmosphereAltitude * 0.33333333e-3)))*1000;
-                displayOrbitalData = apoapsis>hmin || periapsis>hmin;
-            }
-            else
-                displayOrbitalData = true;
-   
-            displayAtmosphericData &= b.atmosphere && vessel.altitude<b.maxAtmosphereAltitude;
 
 #if DEBUG
             if (Input.GetKeyDown(KeyCode.I))
@@ -491,29 +664,6 @@ public class DMFlightData : MonoBehaviour
                 f.Close();
             }
 #endif
-        }
-        altitude = vessel.altitude;
-        radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
-
-        if (hasDRE)
-        {
-            highestTemp = double.NegativeInfinity;
-            highestRelativeTemp = double.NegativeInfinity;
-            foreach (Part p in vessel.parts)
-            {
-                if (p.temperature != 0f) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
-                {
-                    highestTemp = Math.Max(p.temperature, highestTemp);
-                    highestRelativeTemp = Math.Max(p.temperature/p.maxTemp, highestRelativeTemp);
-                }
-            }
-            if (highestRelativeTemp > 0.95)
-                warnTemp = 2;
-            else if (highestRelativeTemp > 0.8)
-                warnTemp = 1;
-            else
-                warnTemp = 0;
-        }
     }
     #endregion
 
@@ -616,6 +766,7 @@ public class DMFlightData : MonoBehaviour
     float estimatedWindowHeight2 = 100f;
     const float fontHeight = 16f; // hardcoding this is probably a bad idea. Problem is how to obtain that by code?
     const float windowBottomOffset = 5f;
+    float uiScalingFactor = 1f;
 
     void SetupGUI()
     {
@@ -703,71 +854,75 @@ public class DMFlightData : MonoBehaviour
 
     protected void DrawWindow1(int windowId)
     {
-        estimatedWindowHeight1 = 0f;
-        GUILayoutOption opt = GUILayout.ExpandWidth(true);
+        float h = 0f;
+        //GUILayoutOption opt = GUILayout.ExpandWidth(true);
         GUILayout.BeginVertical();
-        if (displayAtmosphericData)
+        if (data.hasAerodynamics)
         {
-            GUILayout.Label("Mach " + machNumber.ToString("F2"), style_emphasized, opt);
-            estimatedWindowHeight1 += 1;
-        }        
-        if (radarAltitude < 5000)
-        {
-            GUILayout.Label("Alt " + FormatRadarAltitude(radarAltitude) + " R", style_label, opt);
-            estimatedWindowHeight1 += 1;
+            GUILayout.Label("Mach " + data.machNumber.ToString("F2"), style_emphasized);
+            h += 1;
         }
-        else
-        {
-            GUILayout.Label("Alt " + FormatAltitude(altitude), style_label, opt);
-            estimatedWindowHeight1 += 1;
-        }
-        if (displayAtmosphericData)
+        if (data.hasAirAvailability)
         {
             String intakeLabel = "Intake";
-            if (airAvailability < 2d) intakeLabel += "  "+(airAvailability*100d).ToString("F0") + "%";
-            GUILayout.Label(intakeLabel, styles[warnAir], opt);
-            GUILayout.Label("Q  " + FormatPressure(q), styles[warnQ], opt);
-            GUILayout.Label("Stall", styles[warnStall], opt);
-            estimatedWindowHeight1 += 4;
+            if (data.airAvailability < 2d) intakeLabel += "  " + (data.airAvailability * 100d).ToString("F0") + "%";
+            GUILayout.Label(intakeLabel, styles[data.warnAir]);
+            h += 1;
+        }
+        if (data.hasAerodynamics)
+        {
+            GUILayout.Label("Q  " + FormatPressure(data.q), styles[data.warnQ]);
+            GUILayout.Label("Stall", styles[data.warnStall]);
+            h += 2;
+        }
+        if (data.hasTemp)
+        {
+            GUILayout.Label("T " + data.highestTemp.ToString("F0") + " °C", styles[data.warnTemp]);
+            h += 1;
         }
         GUILayout.EndVertical();
-        estimatedWindowHeight1 *= fontHeight;
+        estimatedWindowHeight1 = h*fontHeight;
     }
 
     protected void DrawWindow2(int windowId)
     {
-        estimatedWindowHeight2 = 0;
-        GUILayoutOption opt = GUILayout.ExpandWidth(true);
+        float h = 0;
+        //GUILayoutOption opt = GUILayout.ExpandWidth(true);
         GUILayout.BeginVertical();
-        if (displayOrbitalData)
+        if (data.radarAltitude < 5000)
+        {
+            GUILayout.Label("Alt " + FormatRadarAltitude(data.radarAltitude) + " R", style_label);
+            h += 1;
+        }
+        else
+        {
+            GUILayout.Label("Alt " + FormatAltitude(data.altitude), style_label);
+            h += 1;
+        }
+        if (data.isAtmosphericLowLevelFlight == false)
         {   
             String timeLabel = "";
-            switch (nextNode)
+            switch (data.nextNode)
             {
-                case NextNode.Ap: timeLabel = "Ap"; break;
-                case NextNode.Pe: timeLabel = "Pe"; break;
-                case NextNode.Encounter: timeLabel = "En"; break;
-                case NextNode.Maneuver: timeLabel = "Man"; break;
-                case NextNode.Escape: timeLabel = "Esc"; break;
+                case Data.NextNode.Ap: timeLabel = "Ap"; break;
+                case Data.NextNode.Pe: timeLabel = "Pe"; break;
+                case Data.NextNode.Encounter: timeLabel = "En"; break;
+                case Data.NextNode.Maneuver: timeLabel = "Man"; break;
+                case Data.NextNode.Escape: timeLabel = "Esc"; break;
             }
             //timeLabel = "T<size=8>"+timeLabel+"</size> -";
             timeLabel = "T" + timeLabel + " -";
-            GUILayout.Label(timeLabel + FormatTime(timeToNode), style_label, opt);
-            estimatedWindowHeight2 += 1;
-            if (nextNode == NextNode.Ap || nextNode == NextNode.Pe)
+            GUILayout.Label(timeLabel + FormatTime(data.timeToNode), style_label);
+            h += 1;
+            if (data.nextNode == Data.NextNode.Ap || data.nextNode == Data.NextNode.Pe)
             {
-                GUILayout.Label("Ap " + FormatAltitude(apoapsis), nextNode == NextNode.Ap ? style_emphasized : style_label, opt);
-                GUILayout.Label("Pe " + FormatAltitude(periapsis), nextNode == NextNode.Pe ? style_emphasized : style_label, opt);
-                estimatedWindowHeight2 += 2;
+                GUILayout.Label("Ap " + FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? style_emphasized : style_label);
+                GUILayout.Label("Pe " + FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? style_emphasized : style_label);
+                h += 2;
             }
         }
-        if (hasDRE)
-        {
-            GUILayout.Label("T " + highestTemp.ToString("F0") + " °C", styles[warnTemp], opt);
-            estimatedWindowHeight2 += 1;
-        }
         GUILayout.EndVertical();
-        estimatedWindowHeight2 *= fontHeight;
+        estimatedWindowHeight2 = h * fontHeight;
     }
     #endregion
 }
