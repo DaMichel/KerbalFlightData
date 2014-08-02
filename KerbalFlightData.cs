@@ -629,7 +629,7 @@ public class DMFlightData : MonoBehaviour
         var s = new GUIStyle();
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.white;
         s.padding = new RectOffset(1, 1, 1, 1);
-        s.richText = true;
+        //s.richText = true;
         
         style_label = s;
         style_emphasized = new GUIStyle(s);
@@ -744,12 +744,14 @@ public class DMFlightData : MonoBehaviour
             String timeLabel = "";
             switch (nextNode)
             {
-                case NextNode.Ap: timeLabel = "T<size=8>Ap</size> -"; break;
-                case NextNode.Pe: timeLabel = "T<size=8>Pe</size> -"; break;
-                case NextNode.Encounter: timeLabel = "T<size=8>Enc</size> -"; break;
-                case NextNode.Maneuver: timeLabel = "T<size=8>Man</size> -"; break;
-                case NextNode.Escape: timeLabel = "T<size=8>Esc</size> -"; break;
+                case NextNode.Ap: timeLabel = "Ap"; break;
+                case NextNode.Pe: timeLabel = "Pe"; break;
+                case NextNode.Encounter: timeLabel = "En"; break;
+                case NextNode.Maneuver: timeLabel = "Man"; break;
+                case NextNode.Escape: timeLabel = "Esc"; break;
             }
+            //timeLabel = "T<size=8>"+timeLabel+"</size> -";
+            timeLabel = "T" + timeLabel + " -";
             GUILayout.Label(timeLabel + FormatTime(timeToNode), style_label, opt);
             estimatedWindowHeight2 += 1;
             if (nextNode == NextNode.Ap || nextNode == NextNode.Pe)
