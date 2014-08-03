@@ -164,6 +164,7 @@ public class Data
 
     public bool isAtmosphericLowLevelFlight;
     public bool isInAtmosphere;
+    public bool isLanded;
 
     public double altitude = 0;
     public double radarAltitude = 0;
@@ -400,8 +401,17 @@ class DataOrbitAndAltitude : DataSource
                 data.isAtmosphericLowLevelFlight = false;
             data.isInAtmosphere = b.atmosphere && vessel.altitude < b.maxAtmosphereAltitude;
         }
+
         data.altitude = vessel.altitude;
         data.radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
+
+        data.isLanded = false;
+        if (vessel.LandedOrSplashed)
+        {
+            double srfSpeedSqr = vessel.GetSrfVelocity().sqrMagnitude;
+            if (srfSpeedSqr < 0.01)
+                data.isLanded = true;
+        }
     }
 }
 
@@ -483,6 +493,7 @@ public class GuiInfo
         get { return showGauge ? navBallRightBoundaryWithGauge : navBallRightBoundary; }
     }
 }
+
 
 
 [KSPAddon(KSPAddon.Startup.Flight, false)]
@@ -764,9 +775,10 @@ public class DMFlightData : MonoBehaviour
     bool guiReady = false;
     float estimatedWindowHeight1 = 100f;
     float estimatedWindowHeight2 = 100f;
-    const float fontHeight = 16f; // hardcoding this is probably a bad idea. Problem is how to obtain that by code?
     const float windowBottomOffset = 5f;
     float uiScalingFactor = 1f;
+    const float fontHeight = 16.5f; // hardcoding this is probably a bad idea. Problem is how to obtain that by code?
+    const float lineSpacing = 1f;
 
     void SetupGUI()
     {
@@ -857,31 +869,34 @@ public class DMFlightData : MonoBehaviour
         float h = 0f;
         //GUILayoutOption opt = GUILayout.ExpandWidth(true);
         GUILayout.BeginVertical();
-        if (data.hasAerodynamics)
+        if (data.isInAtmosphere && !data.isLanded)
         {
-            GUILayout.Label("Mach " + data.machNumber.ToString("F2"), style_emphasized);
-            h += 1;
-        }
-        if (data.hasAirAvailability)
-        {
-            String intakeLabel = "Intake";
-            if (data.airAvailability < 2d) intakeLabel += "  " + (data.airAvailability * 100d).ToString("F0") + "%";
-            GUILayout.Label(intakeLabel, styles[data.warnAir]);
-            h += 1;
-        }
-        if (data.hasAerodynamics)
-        {
-            GUILayout.Label("Q  " + FormatPressure(data.q), styles[data.warnQ]);
-            GUILayout.Label("Stall", styles[data.warnStall]);
-            h += 2;
-        }
-        if (data.hasTemp)
-        {
-            GUILayout.Label("T " + data.highestTemp.ToString("F0") + " °C", styles[data.warnTemp]);
-            h += 1;
+            if (data.hasAerodynamics)
+            {
+                GUILayout.Label("Mach " + data.machNumber.ToString("F2"), style_emphasized);
+                h += 1;
+            }
+            if (data.hasAirAvailability)
+            {
+                String intakeLabel = "Intake";
+                if (data.airAvailability < 2d) intakeLabel += "  " + (data.airAvailability * 100d).ToString("F0") + "%";
+                GUILayout.Label(intakeLabel, styles[data.warnAir]);
+                h += 1;
+            }
+            if (data.hasAerodynamics)
+            {
+                GUILayout.Label("Q  " + FormatPressure(data.q), styles[data.warnQ]);
+                GUILayout.Label("Stall", styles[data.warnStall]);
+                h += 2;
+            }
+            if (data.hasTemp)
+            {
+                GUILayout.Label("T " + data.highestTemp.ToString("F0") + " °C", styles[data.warnTemp]);
+                h += 1;
+            }
         }
         GUILayout.EndVertical();
-        estimatedWindowHeight1 = h*fontHeight;
+        estimatedWindowHeight1 = h*fontHeight + (h-1)*lineSpacing;
     }
 
     protected void DrawWindow2(int windowId)
@@ -891,12 +906,12 @@ public class DMFlightData : MonoBehaviour
         GUILayout.BeginVertical();
         if (data.radarAltitude < 5000)
         {
-            GUILayout.Label("Alt " + FormatRadarAltitude(data.radarAltitude) + " R", style_label);
+            GUILayout.Label("Alt " + FormatRadarAltitude(data.radarAltitude) + " R", data.radarAltitude < 200 ? styles[1] : style_emphasized);
             h += 1;
         }
         else
         {
-            GUILayout.Label("Alt " + FormatAltitude(data.altitude), style_label);
+            GUILayout.Label("Alt " + FormatAltitude(data.altitude), style_emphasized);
             h += 1;
         }
         if (data.isAtmosphericLowLevelFlight == false)
@@ -922,7 +937,7 @@ public class DMFlightData : MonoBehaviour
             }
         }
         GUILayout.EndVertical();
-        estimatedWindowHeight2 = h * fontHeight;
+        estimatedWindowHeight2 = h*fontHeight + (h-1)*lineSpacing;
     }
     #endregion
 }
