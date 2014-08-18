@@ -21,6 +21,8 @@ using System.Reflection;
 using System.Linq;
 using System.Collections.Generic;
 
+namespace KerbalFlightData
+{
 
 public class DMDebug
 {
@@ -37,7 +39,7 @@ public class DMDebug
         return false;
     }
 
-    void Out(String s, int indent)
+    public void Out(String s, int indent)
     {
         var indentStr = new String(' ', indent);
         var arr = s.Split('\n');
@@ -71,6 +73,25 @@ public class DMDebug
         if (!IsInterestingType(type)) return false;
         if (name == "parent" || name == "root" || name == "target") return false;
         return true;
+    }
+
+    public void PrintGameObjectHierarchy(GameObject o, int indent)
+    {
+        Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3"), indent);
+        foreach (Transform t in o.transform)
+        {
+            PrintGameObjectHierarchy(t.gameObject, indent+2);
+        }
+    }
+
+    public void PrintGameObjectHierarchUp(GameObject o, out int indent)
+    {
+        if (o.transform.parent)
+            PrintGameObjectHierarchUp(o.transform.parent.gameObject, out indent);
+        else
+            indent = 0;
+        indent += 2;
+        Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3"), indent);
     }
 
     public void PrintHierarchy(UnityEngine.Object instance, int indent = 0)
@@ -137,6 +158,17 @@ public class DMDebug
         Debug.LogWarning("DMFlightData: " + s);
     }
 }
+
+
+
+public static class MyStyleId
+{
+    public const int Plain = 0;
+    public const int Greyed = 1;
+    public const int Warn1 = 2;
+    public const int Warn2 = 3;
+    public const int Emph = 4;
+};
 
 
 public class Data
@@ -311,41 +343,41 @@ class DataSetupWarnings : DataSource
         {
             if (data.q < 10)
             {
-                data.warnQ = 0;
-                data.warnStall = 0;
+                data.warnQ = MyStyleId.Greyed;
+                data.warnStall = MyStyleId.Greyed;
             }
             else
             {
                 if (data.q > 40000)
-                    data.warnQ = 1;
+                    data.warnQ = MyStyleId.Warn1;
                 else
-                    data.warnQ = 0;
+                    data.warnQ = MyStyleId.Greyed;
 
                 if (data.stallPercentage > 0.5)
-                    data.warnStall = 2;
+                    data.warnStall = MyStyleId.Warn2;
                 else if (data.stallPercentage > 0.005)
-                    data.warnStall = 1;
+                    data.warnStall = MyStyleId.Warn1;
                 else
-                    data.warnStall = 0;
+                    data.warnStall = MyStyleId.Greyed;
             }
         }
         if (data.hasAirAvailability)
         {
             if (data.airAvailability < 1.05)
-                data.warnAir = 2;
+                data.warnAir = MyStyleId.Warn2;
             else if (data.airAvailability < 1.5)
-                data.warnAir = 1;
+                data.warnAir = MyStyleId.Warn1;
             else
-                data.warnAir = 0;
+                data.warnAir = MyStyleId.Greyed;
         }
         if (data.hasTemp)
         {
             if (data.highestRelativeTemp > 0.95)
-                data.warnTemp = 2;
+                data.warnTemp = MyStyleId.Warn2;
             else if (data.highestRelativeTemp > 0.8)
-                data.warnTemp = 1;
+                data.warnTemp = MyStyleId.Warn1;
             else
-                data.warnTemp = 0;
+                data.warnTemp = MyStyleId.Greyed;
         }
     }
 }
@@ -442,10 +474,12 @@ class DataTemperature : DataSource
 public class GuiInfo
 {
     NavBallBurnVector burnVector = null;
+    public GameObject        navball    = null;
 
     float navBallLeftBoundary;
     float navBallRightBoundary;
     float navBallRightBoundaryWithGauge;
+    public float scale;
 
     public GuiInfo()
     {
@@ -455,7 +489,7 @@ public class GuiInfo
     public void Update()
     {        
         ScreenSafeUI ui = ScreenSafeUI.fetch;
-        GameObject navballGameObject = GameObject.Find("NavBall");
+        GameObject navballGameObject = navball = GameObject.Find("NavBall");
         GameObject maneuverVectorGameObject = GameObject.Find("maneuverVector");
         burnVector = maneuverVectorGameObject.GetComponent<NavBallBurnVector>();
         Camera cam = ScreenSafeUI.referenceCam;
@@ -471,6 +505,8 @@ public class GuiInfo
         navBallRightBoundaryWithGauge = p3.x;
 
         ui.centerAnchor.bottom.hasChanged = false; // this is probably not a good idea. It will break things that also use the hasChanged flag ...
+
+        scale = ui.centerAnchor.bottom.localScale.x;
     }
 
     public bool hasChanged
@@ -637,8 +673,6 @@ public class DMFlightData : MonoBehaviour
             return;
         }
 #endif 
-        if (guiInfo.hasChanged)
-            guiInfo.Update();
 
         displayUI = false; // don't show anything unless some stuff is all right
         if (!FlightGlobals.ready) return;
@@ -668,8 +702,17 @@ public class DMFlightData : MonoBehaviour
                 //dbg.PrintHierarchy(ScreenSafeUI.fetch);
                 //dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"));
                 //dbg.PrintHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom);
-                //dbg.PrintHierarchy(GameObject.Find("NavBall"));
-                dbg.PrintHierarchy(GameObject.Find("maneuverVector"));
+                dbg.PrintHierarchy(GameObject.Find("speedText"));
+                dbg.Out("---------------------------------------------------------", 0);
+                dbg.PrintHierarchy(GameObject.Find("KFI-test1"));
+                dbg.Out("---------------------------------------------------------", 0);
+                dbg.PrintHierarchy(GameObject.Find("UI camera"));
+                dbg.Out("---------------------------------------------------------", 0);
+                //dbg.PrintHierarchy(GameObject.Find("maneuverVector"));
+                //int indent;
+                //dbg.PrintGameObjectHierarchUp(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, out indent);
+                //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, indent);
+                dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
                 var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
                 f.Write(dbg.ToString());
                 f.Close();
@@ -769,47 +812,116 @@ public class DMFlightData : MonoBehaviour
     #endregion
 
     #region GUI
-    GUIStyle[] styles = { null, null, null };
-    GUIStyle style_label = null;
-    GUIStyle style_emphasized = null;
+    GUIStyle[] styles = { null, null, null, null, null };
+    //GUIStyle[] shadowed_styles = { null, null, null, null, null };
+    GUIStyle style_window = null;
     bool guiReady = false;
-    float estimatedWindowHeight1 = 100f;
-    float estimatedWindowHeight2 = 100f;
+    Rect rectWindow1;
+    Rect rectWindow2;
     const float windowBottomOffset = 5f;
     float uiScalingFactor = 1f;
-    const float fontHeight = 16.5f; // hardcoding this is probably a bad idea. Problem is how to obtain that by code?
-    const float lineSpacing = 1f;
+    int baselineFontSize = 14; // font size @ "normal" UI scale setting
+    int windowId1 = (int)((int.MaxValue-1)*UnityEngine.Random.value);
+    int windowId2 = (int)((int.MaxValue - 1) * UnityEngine.Random.value);
+    GameObject text1, text2;
+
+    void PaintLabel(String s, int styleid)
+    {
+        GUILayout.Label(s, styles[styleid], GUILayout.ExpandWidth(true));
+    }
 
     void SetupGUI()
     {
         // how much the fonts and everything must be scaled relative to a
         // reference GUI size (the normal KSP setting, i believe).
-        uiScalingFactor = 0.7f / ScreenSafeUI.referenceCam.orthographicSize;
-        if (Mathf.Abs(uiScalingFactor - 1f) < 0.1f) // less than 10% scaling -> no scaling to make the font look good.
-            uiScalingFactor = 1f; 
+        uiScalingFactor = 0.6f / ScreenSafeUI.referenceCam.orthographicSize; // 1.175 = orthographicSize for "normal" UI scale setting
+        uiScalingFactor *= guiInfo.scale; // scale font with navball
+
+        style_window = new GUIStyle();
+        style_window.padding = new RectOffset(0, 0, 0, 0);
+        style_window.margin = new RectOffset(0, 0, 0, 0);
+        style_window.border = new RectOffset(0, 0, 0, 0);
+        //style_window.stretchWidth = true;
+        style_window.wordWrap = false;
 
         // GUI functions must only be called in OnGUI ...
-        var s = new GUIStyle();
+        var s = new GUIStyle(GUI.skin.label);
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.white;
-        s.padding = new RectOffset(1, 1, 1, 1);
-        //s.richText = true;
-        
-        style_label = s;
-        style_emphasized = new GUIStyle(s);
-        style_emphasized.fontStyle = FontStyle.Bold;
+        s.padding = new RectOffset(0, 0, 0, 1);
+        s.margin  = new RectOffset(0,0,0,0);
+        s.fontSize = Mathf.RoundToInt(baselineFontSize * uiScalingFactor);
+        s.wordWrap = false;
+
+        styles[MyStyleId.Plain] = s;
+        styles[MyStyleId.Emph] = new GUIStyle(s);
+        styles[MyStyleId.Emph].fontStyle = FontStyle.Bold;
 
         s = new GUIStyle(s);
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.grey;
-        styles[0] = s;
+        styles[MyStyleId.Greyed] = s;
         s = new GUIStyle(s);
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.yellow;
-        styles[1] = s;
+        styles[MyStyleId.Warn1] = s;
         s = new GUIStyle(s);
         s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.red;
-        styles[2] = s;
-        
-        styles[1].fontStyle = styles[2].fontStyle = FontStyle.Bold;
+        styles[MyStyleId.Warn2] = s;
+
+        styles[MyStyleId.Warn1].fontStyle = styles[MyStyleId.Warn2].fontStyle = FontStyle.Bold;
+
+        /*
+        for (int i=0; i<styles.Length; ++i)
+        {
+            s = new GUIStyle(styles[i]);
+            s.hover.textColor = s.active.textColor = s.normal.textColor = s.focused.textColor = s.onNormal.textColor = s.onFocused.textColor = s.onHover.textColor = s.onActive.textColor = Color.black;
+            shadowed_styles[i] = s;
+            //s.contentOffset = new Vector2(1f, 2f); // not working
+        }*/
+
         guiReady = true;
+
+        /* //not going to happen ... 
+         * // i'm trying to set up a Font instance with a custom bitmap font, but unluckly this draws absolutely nothing on screen, no error as well.
+        theFont = new Font("DMFont");
+        byte[] fubar = ((Texture2D)GUI.skin.font.material.mainTexture).EncodeToPNG();
+        KSP.IO.File.WriteAllBytes<DMFlightData>(fubar, "shit.png"); // as if this was going to work ... it doesn't ...
+        // next try
+        Texture2D fontTex = GameDatabase.Instance.GetTexture("KerbalFlightData/Textures/plain_white", false);
+        fontTex.filterMode = FilterMode.Bilinear;
+        DMDebug.Log(fontTex == null ? "fontTex = null" : fontTex.ToString());
+        DMDebug.Log(GUI.skin.font.material == null ? "s.font.material = null" : GUI.skin.font.material.ToString());
+        theFont.characterInfo = new CharacterInfo[1];
+        theFont.characterInfo[0].index = 65; // this is the decimal code for an 'A'
+        theFont.characterInfo[0].uv = new Rect(0.527f, 0.156f, 0.054f, 0.125f);
+        theFont.characterInfo[0].width = 8f;
+        theFont.characterInfo[0].vert = new Rect(0f, -2f, 10f, -15f);
+        theFont.characterInfo[0].size = 12;
+        theFont.characterInfo[0].style = FontStyle.Normal;
+        theFont.material = new Material(GUI.skin.font.material);
+        theFont.material.mainTexture = fontTex; */
+
+        //if (text1 == null)
+        //    text1 = CreateGUIText("test1", "Hello", TextAnchor.LowerLeft, Color.yellow, 0f, 0.2f, guiInfo.navball.transform);
+        //if (text2 == null)
+        //    text2 = CreateGUIText("test1", "Hello", TextAnchor.LowerRight, Color.yellow, 0f, 0.2f, guiInfo.navball.transform);
+    }
+
+    GameObject CreateGUIText(string name, string text, TextAnchor anchor, Color color, float x, float y, Transform parent)
+    {
+        GameObject o = new GameObject("KFI-"+name);
+        o.layer = 12; // navball layer
+        o.transform.parent = parent;
+        o.transform.localPosition = new Vector3(x, y, 0);
+        GUIText t = o.AddComponent<GUIText>();
+        t.text = text;
+        t.alignment = TextAlignment.Left;
+        t.anchor    = anchor;
+        t.material.color = color;
+        ScreenSafeGUIText t2 = o.AddComponent<ScreenSafeGUIText>();
+        t2.text = text;
+        t2.textSize = 12;
+        t2.textStyle = GUI.skin.label;
+        t2.useGUILayout = true;
+        return o;
     }
 
 
@@ -827,92 +939,103 @@ public class DMFlightData : MonoBehaviour
             }
         }
 
+        if (guiInfo.hasChanged) 
+        {
+            guiInfo.Update();
+            SetupGUI(); // to update font size when the navball size changes
+        }
         if (!guiReady) SetupGUI();
 
         // this is pretty messy but it has to work with different gui scaling factors.
-        GUIStyle style = new GUIStyle();
-        float width = 100f;
-        float height = estimatedWindowHeight1;
-        float pos_x = guiInfo.screenAnchorRight;
-        float pos_y = Screen.height - (height + windowBottomOffset) * uiScalingFactor;
+        float width = rectWindow1.width;
+        float height = rectWindow1.height;
+        float pos_x = Mathf.Floor(guiInfo.screenAnchorRight);
+        float pos_y = Mathf.Floor(Screen.height - (height + windowBottomOffset));
+        Rect r;
+        Rect initialRect = new Rect(0, 0, 1, 1);
 
-        GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
-
-        GUI.Window(
-            GUIUtility.GetControlID(FocusType.Passive),
-            new Rect(0, 0, width, height),
+        GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, Vector3.one);
+        // apparently only repaint can report proper window size;
+        // so if it is not a repaint event i must use the previously known window size
+        r = GUILayout.Window(
+            windowId1,
+            initialRect,
             this.DrawWindow1,
-            GUIContent.none,
-            style
+            "",
+            style_window,
+            GUILayout.ExpandWidth(true)
         );
+        if (r != initialRect) // sometimes r has the expanded window size, sometimes it has the initial size ...
+            rectWindow1 = r; 
 
-        width = 90f;
-        height = estimatedWindowHeight2;
-        pos_x = guiInfo.screenAnchorLeft - width;
-        pos_y = Screen.height - (height + windowBottomOffset) * uiScalingFactor;
+        width = rectWindow2.width;
+        height = rectWindow2.height;
+        pos_x = Mathf.Floor(guiInfo.screenAnchorLeft - width + 10f);
+        pos_y = Mathf.Floor(Screen.height - (height + windowBottomOffset));
 
-        GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, new Vector3(uiScalingFactor, uiScalingFactor, 1f));
-
-        GUI.Window(
-            GUIUtility.GetControlID(FocusType.Passive),
-            new Rect(0, 0, width, height),
+        GUI.matrix = Matrix4x4.TRS(new Vector3(pos_x, pos_y), Quaternion.identity, Vector3.one);
+        r = GUILayout.Window(
+            windowId2,
+            initialRect,
             this.DrawWindow2,
-            GUIContent.none,
-            style
+            "",
+            style_window,
+            GUILayout.ExpandWidth(true)
         );
+        if (r != initialRect)
+            rectWindow2 = r;
 
         GUI.matrix = Matrix4x4.identity;
+
+        //DMDebug.Log("even = " + Event.current.type.ToString());
+        //DMDebug.Log("estimated W height1 = "+rectWindow1.height.ToString());
+        //DMDebug.Log("estimated W width1 = " + rectWindow1.width.ToString());
+        //DMDebug.Log("estimated W width2 = " + estimatedWindowWidth2.ToString());
+        //DMDebug.Log("estimated W height2 = "+estimatedWindowHeight2.ToString());
+        //DMDebug.Log("fontsize = " + labelHeight);
+        //DMDebug.Log("scale = " + guiInfo.scale);
+        //DMDebug.Log("hasTemp = " + data.hasTemp);
+        //DMDebug.Log("uiScale = " + ScreenSafeUI.referenceCam.orthographicSize);
     }
 
     protected void DrawWindow1(int windowId)
     {
-        float h = 0f;
-        //GUILayoutOption opt = GUILayout.ExpandWidth(true);
-        GUILayout.BeginVertical();
+        GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
         if (data.isInAtmosphere && !data.isLanded)
         {
             if (data.hasAerodynamics)
             {
-                GUILayout.Label("Mach " + data.machNumber.ToString("F2"), style_emphasized);
-                h += 1;
+                PaintLabel("Mach " + data.machNumber.ToString("F2"), MyStyleId.Emph);
             }
             if (data.hasAirAvailability)
             {
                 String intakeLabel = "Intake";
                 if (data.airAvailability < 2d) intakeLabel += "  " + (data.airAvailability * 100d).ToString("F0") + "%";
-                GUILayout.Label(intakeLabel, styles[data.warnAir]);
-                h += 1;
+                PaintLabel(intakeLabel, data.warnAir);
             }
             if (data.hasAerodynamics)
             {
-                GUILayout.Label("Q  " + FormatPressure(data.q), styles[data.warnQ]);
-                GUILayout.Label("Stall", styles[data.warnStall]);
-                h += 2;
+                PaintLabel("Q  " + FormatPressure(data.q), data.warnQ);
+                PaintLabel("Stall", data.warnStall);
             }
             if (data.hasTemp)
             {
-                GUILayout.Label("T " + data.highestTemp.ToString("F0") + " °C", styles[data.warnTemp]);
-                h += 1;
+                PaintLabel("T " + data.highestTemp.ToString("F0") + " °C", data.warnTemp);
             }
         }
         GUILayout.EndVertical();
-        estimatedWindowHeight1 = h*fontHeight + (h-1)*lineSpacing;
     }
 
     protected void DrawWindow2(int windowId)
     {
-        float h = 0;
-        //GUILayoutOption opt = GUILayout.ExpandWidth(true);
         GUILayout.BeginVertical();
         if (data.radarAltitude < 5000)
         {
-            GUILayout.Label("Alt " + FormatRadarAltitude(data.radarAltitude) + " R", data.radarAltitude < 200 ? styles[1] : style_emphasized);
-            h += 1;
+            PaintLabel("Alt " + FormatRadarAltitude(data.radarAltitude) + " R", data.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph);
         }
         else
         {
-            GUILayout.Label("Alt " + FormatAltitude(data.altitude), style_emphasized);
-            h += 1;
+            PaintLabel("Alt " + FormatAltitude(data.altitude), MyStyleId.Emph);
         }
         if (data.isAtmosphericLowLevelFlight == false)
         {   
@@ -925,19 +1048,18 @@ public class DMFlightData : MonoBehaviour
                 case Data.NextNode.Maneuver: timeLabel = "Man"; break;
                 case Data.NextNode.Escape: timeLabel = "Esc"; break;
             }
-            //timeLabel = "T<size=8>"+timeLabel+"</size> -";
             timeLabel = "T" + timeLabel + " -";
-            GUILayout.Label(timeLabel + FormatTime(data.timeToNode), style_label);
-            h += 1;
+            PaintLabel(timeLabel + FormatTime(data.timeToNode), MyStyleId.Plain);
             if (data.nextNode == Data.NextNode.Ap || data.nextNode == Data.NextNode.Pe)
             {
-                GUILayout.Label("Ap " + FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? style_emphasized : style_label);
-                GUILayout.Label("Pe " + FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? style_emphasized : style_label);
-                h += 2;
+                PaintLabel("Ap " + FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain);
+                PaintLabel("Pe " + FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain);
             }
         }
         GUILayout.EndVertical();
-        estimatedWindowHeight2 = h*fontHeight + (h-1)*lineSpacing;
     }
     #endregion
+}
+
+
 }
