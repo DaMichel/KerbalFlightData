@@ -21,6 +21,7 @@ using System.Reflection;
 using System.Linq;
 using System.Collections.Generic;
 
+
 namespace KerbalFlightData
 {
 
@@ -150,12 +151,17 @@ namespace KerbalFlightData
             return sb.ToString();
         }
 #endif
+        [System.Diagnostics.Conditional("DEBUG")]
+        public static void Log2(string s)
+        {
+            DMDebug.Log(s);
+        }
 
         public static void Log(string s)
         {
             Debug.Log("DMFlightData: " + s);
         }
-
+        
         public static void LogWarning(string s)
         {
             Debug.LogWarning("DMFlightData: " + s);
@@ -496,6 +502,7 @@ namespace KerbalFlightData
     {
         GUIText    gt1_;
         GUIText    gt2_; // child of ssgt1_
+        GUIText    gt3_; // child of ssgt1_
         int        styleId_ = -1;
         Rect       screenRect_;
         int change_ = 0, last_change_checked_ = -1;
@@ -506,7 +513,6 @@ namespace KerbalFlightData
             textGO.layer = 12; // navball layer
 
             KFIText kfi = textGO.AddComponent<KFIText>();
-            kfi.useGUILayout = false;
             
             kfi.gt1_ = textGO.AddComponent<GUIText>();
             kfi.gt1_.anchor = TextAnchor.LowerLeft;
@@ -521,53 +527,26 @@ namespace KerbalFlightData
             kfi.gt2_.anchor = TextAnchor.LowerLeft;
             kfi.gt2_.alignment = TextAlignment.Left;
 
+            shadowGO = new GameObject("KFI-SH2-" + id);
+            shadowGO.layer = 12;
+            shadowGO.transform.parent = textGO.transform;
+            shadowGO.transform.localPosition = Vector3.zero;
+
+            kfi.gt3_ = shadowGO.AddComponent<GUIText>();
+            kfi.gt3_.anchor = TextAnchor.LowerLeft;
+            kfi.gt3_.alignment = TextAlignment.Left;
+
             kfi.styleId = styleId;
-
-            //GUIText t = o.AddComponent<GUIText>();
-            //t.text = text;
-            //t.alignment = TextAlignment.Left;
-            //t.anchor    = anchor;
-            //t.material.color = color;
             return kfi;
-        }
-
-        public static void Destroy(ref KFIText kfi)
-        {
-            GameObject.Destroy(kfi.gameObject);
-            kfi = null;
-        }
-
-        public void OnGUI()
-        {
-            if (Event.current.type != EventType.Repaint) return;
-            if (this.gt1_.fontSize != GuiInfo.instance.fontSize)
-            {
-                this.gt1_.fontSize = GuiInfo.instance.fontSize;
-                this.gt2_.fontSize = GuiInfo.instance.fontSize;
-                ++change_;
-            }
-            if (change_ != last_change_checked_)
-            {
-                Rect r = this.gt1_.GetScreenRect();
-                Camera c = GuiInfo.instance.camera;
-                Vector2 p0 = c.ScreenToViewportPoint(r.min);
-                Vector2 p1 = c.ScreenToViewportPoint(r.max);
-                screenRect_ = new Rect(p0.x, p1.y, p1.x - p0.x, p1.y - p0.y);
-            }
         }
         
         public void OnDestroy()
         {
+            DMDebug.Log2(this.name + " OnDestroy");
             // release links to make it easier for the gc
             gt1_ = null;
             gt2_ = null;
-        }
-
-        public void SetStyledTextAndEnable(string text, int styleId)
-        {
-            this.text = text;
-            this.styleId = styleId;
-            this.enabled = true;
+            gt3_ = null;
         }
 
         public int styleId
@@ -582,14 +561,18 @@ namespace KerbalFlightData
                     this.gt1_.fontSize  = GuiInfo.instance.fontSize;
                     this.gt1_.font      = s.font;
                     this.gt1_.material.color = s.active.textColor;
-                    //this.gt1_.color     = s.active.textColor;
-                    s = GuiInfo.instance.shadowed_styles[value];
+
                     this.gt2_.fontStyle = s.fontStyle;
                     this.gt2_.fontSize = GuiInfo.instance.fontSize;
                     this.gt2_.font = s.font;
-                    this.gt2_.material.color = s.active.textColor;
-                    //this.gt2_.color = s.active.textColor;
-                    this.gt2_.pixelOffset = s.contentOffset;
+                    this.gt2_.material.color = XKCDColors.DarkGrey;
+                    this.gt2_.pixelOffset = new Vector2(0f, -1f);
+
+                    this.gt3_.fontStyle = s.fontStyle;
+                    this.gt3_.fontSize = GuiInfo.instance.fontSize;
+                    this.gt3_.font = s.font;
+                    this.gt3_.material.color = XKCDColors.DarkGrey;
+                    this.gt3_.pixelOffset = new Vector2(1f, -1f);
                     change_++;
                 }
             }
@@ -607,12 +590,28 @@ namespace KerbalFlightData
                 {
                     this.gt1_.text = value;
                     this.gt2_.text = value;
-                    change_++;
+                    this.gt3_.text = value;
+                    ++change_;
                 }
             }
             get 
             {
                 return this.gt1_.text;
+            }
+        }
+
+        public int fontSize
+        {
+            set
+            {
+                this.gt1_.fontSize = GuiInfo.instance.fontSize;
+                this.gt2_.fontSize = GuiInfo.instance.fontSize;
+                this.gt3_.fontSize = GuiInfo.instance.fontSize;
+                ++change_;
+            }
+            get 
+            {
+                return this.gt1_.fontSize;
             }
         }
 
@@ -628,20 +627,30 @@ namespace KerbalFlightData
         {
             get
             {
+                if (change_ != last_change_checked_)
+                {
+                    Rect r = this.gt1_.GetScreenRect();
+                    Camera c = GuiInfo.instance.camera;
+                    Vector2 p0 = c.ScreenToViewportPoint(r.min);
+                    Vector2 p1 = c.ScreenToViewportPoint(r.max);
+                    screenRect_ = new Rect(p0.x, p1.y, p1.x - p0.x, p1.y - p0.y);
+                    last_change_checked_ = change_;
+                }
                 return screenRect_;
             }
         }
 
-        new public bool enabled
+        public bool enableGameObject
         {
-            get
-            {
-                return this.gameObject.activeSelf;
-            }
             set 
-            {
-                this.gameObject.SetActive(value);
+            { 
+                if (this.gameObject.activeSelf != value) 
+                {
+                    DMDebug.Log2(this.name + " enabled=" + value);
+                    this.gameObject.SetActive(value);
+                }
             }
+            get { return this.gameObject.activeSelf; }
         }
     };
 
@@ -650,6 +659,7 @@ namespace KerbalFlightData
     {
         public TextAlignment alignment;
         public List<KFIText> items;
+        float maximalWidth = 0f;
 
         public static KFIArea Create(string id, Vector2 position_, TextAlignment alignment_, Transform parent) // factory, creates game object with attached FKIArea
         {
@@ -663,41 +673,54 @@ namespace KerbalFlightData
             return kfi;
         }
 
-        public static void Destroy(KFIArea a) // destroy its gameobject
+        void LateUpdate()
         {
-            GameObject.Destroy(a.gameObject);
-        }
-
-        public void OnGUI()
-        {
-            if (Event.current.type != EventType.Repaint) return;
-            Vector2 size = Vector2.zero;
+            //DMDebug.Log2(this.name + " LateUpdate");
+            float w = maximalWidth, h = 0;
             foreach (KFIText t in items)
             {
-                if (!t.enabled) continue;
+                if (!t || !t.enableGameObject) continue;
                 Rect r = t.screenRect;
-                size = new Vector2(Mathf.Max(size.x, r.width), size.y + r.height);
+                //DMDebug.Log2("r("+t.name+") = " + r.ToString());
+                w = Mathf.Max(w, r.width);
+                h += r.height;
             }
             Vector2 p = Vector2.zero;
-            if (alignment == TextAlignment.Right) p.x -= size.x;
-            p.y += size.y;
+            if (alignment == TextAlignment.Right) p.x -= w;
+            p.y += h;
             foreach (KFIText t in items)
             {
-                if (!t.enabled) continue;
+                if (!t || !t.enableGameObject) continue;
                 t.localPosition = p;
                 p.y -= t.screenRect.height;
             }
+            maximalWidth = w;
         }
 
-        public void OnDestroy()
+        void OnDestroy()
         {
+            DMDebug.Log2(this.name + " OnDestroy");
             items.Clear();
         }
 
         public void Add(KFIText t)
         {
             t.gameObject.transform.parent = this.gameObject.transform;
+            t.localPosition = Vector3.zero;
             items.Add(t);
+        }
+
+        public bool enableGameObject
+        {
+            set 
+            { 
+                if (this.gameObject.activeSelf != value) 
+                {
+                    DMDebug.Log2(this.name + " enabled=" + value);
+                    this.gameObject.SetActive(value); 
+                }
+            }
+            get { return this.gameObject.activeSelf; }
         }
     };
 
@@ -712,28 +735,29 @@ namespace KerbalFlightData
         public GameObject navballGameObject = null;
         public Camera     camera = null;
 
-        float navBallLeftBoundary_;
-        float navBallRightBoundary_;
-        float navBallRightBoundaryWithGauge_;
-        float navBallTop_;
+        const float navballWidth = 0.15f;
+        const float navballWidthWithGauge = 0.25f;
+        const int baselineFontSize = 16; // font size @ "normal" UI scale setting
 
         public GUIStyle prototypeStyle;
 
-        public float anchorScale;
-        public float uiScalingFactor = 1f;
-        public int baselineFontSize = 16; // font size @ "normal" UI scale setting
+        public float uiScalingFactor;
         public int fontSize;
+        public float screenAnchorRight;
+        public float screenAnchorLeft;
+        public float screenAnchorBottom;
 
         public GUIStyle[] styles = { null, null, null, null, null };
-        public GUIStyle[] shadowed_styles = { null, null, null, null, null };
 
-        public GuiInfo()
+        GuiInfo()
         {
             Init();
         }
 
         public void Init()
         {
+            // TODO: Remove all GUI stuff
+            //       put something in KFIText so that it auto disables?
             GameObject go = GameObject.Find("speedText");
             prototypeStyle = go.GetComponent<ScreenSafeGUIText>().textStyle;
 
@@ -749,7 +773,7 @@ namespace KerbalFlightData
             styles[MyStyleId.Emph] = new GUIStyle(s);
             styles[MyStyleId.Emph].fontStyle = FontStyle.Bold;
             s = new GUIStyle(s);
-            s.SetColor(Color.grey);
+            s.SetColor(XKCDColors.Grey);
             styles[MyStyleId.Greyed] = s;
             s = new GUIStyle(s);
             s.SetColor(Color.yellow);
@@ -759,70 +783,35 @@ namespace KerbalFlightData
             styles[MyStyleId.Warn2] = s;
             styles[MyStyleId.Warn1].fontStyle = styles[MyStyleId.Warn2].fontStyle = FontStyle.Bold;
 
-            for (int i = 0; i < styles.Length; ++i)
-            {
-                s = new GUIStyle(styles[i]);
-                s.SetColor(Color.black);
-                s.contentOffset = new Vector2(1f, -1f);
-                //s.fontStyle = FontStyle.Bold;
-                shadowed_styles[i] = s;
-            }
+            navballGameObject = GameObject.Find("MapCollapse_navball");
+            GameObject maneuverVectorGameObject = GameObject.Find("maneuverVector");
+            burnVector_ = maneuverVectorGameObject.GetComponent<NavBallBurnVector>();
+            camera = ScreenSafeUI.referenceCam;
 
             Update();
         }
 
         public void Update()
         {
-            navballGameObject = GameObject.Find("NavBall");
-            GameObject maneuverVectorGameObject = GameObject.Find("maneuverVector");
-            burnVector_ = maneuverVectorGameObject.GetComponent<NavBallBurnVector>();
-            camera = ScreenSafeUI.referenceCam;
-
-            float navballWidth = 0.07f;
-            float navballWidthWithGauge = 0.12f;
-
             Vector3 p = camera.WorldToViewportPoint(navballGameObject.transform.position);
             Vector3 p2 = camera.WorldToViewportPoint(navballGameObject.transform.localToWorldMatrix.MultiplyPoint(new Vector3(navballWidth, 0, 0)));
             Vector3 p3 = camera.WorldToViewportPoint(navballGameObject.transform.localToWorldMatrix.MultiplyPoint(new Vector3(navballWidthWithGauge, 0, 0)));
-            navBallRightBoundary_ = p2.x;
-            navBallLeftBoundary_ = p.x - (p2.x - p.x);
-            navBallRightBoundaryWithGauge_ = p3.x;
-            navBallTop_ = p.y;
+            float navBallRightBoundary_ = p2.x;
+            float navBallLeftBoundary_ = p.x - (p2.x - p.x);
+            float navBallRightBoundaryWithGauge_ = p3.x;
+            float navBallTop_ = p.y;
+            bool hasGauge = burnVector_.deltaVGauge != null && burnVector_.deltaVGauge.gameObject.activeSelf == true;
+            screenAnchorRight = hasGauge ? navBallRightBoundaryWithGauge_ : navBallRightBoundary_;
+            screenAnchorLeft  = navBallLeftBoundary_;
+            screenAnchorBottom   = navBallTop_;
 
-            ScreenSafeUI.fetch.centerAnchor.bottom.hasChanged = false; // this is probably not a good idea. It will break things that also use the hasChanged flag ...
-
-            anchorScale = ScreenSafeUI.fetch.centerAnchor.bottom.localScale.x;
+            float anchorScale = ScreenSafeUI.fetch.centerAnchor.bottom.localScale.x;
             // how much the fonts and everything must be scaled relative to a
             // reference GUI size (the normal KSP setting, i believe).
-            uiScalingFactor = 0.6f / ScreenSafeUI.referenceCam.orthographicSize; // 1.175 = orthographicSize for "normal" UI scale setting
+            uiScalingFactor = 0.6f / ScreenSafeUI.referenceCam.orthographicSize; // 0.6 = orthographicSize for "normal" UI scale setting
             uiScalingFactor *= anchorScale; // scale font with navball
 
             fontSize = Mathf.RoundToInt(baselineFontSize * uiScalingFactor);
-        }
-
-        public bool hasChanged
-        {
-            get { return ScreenSafeUI.fetch.centerAnchor.bottom.hasChanged; }
-        }
-
-        public bool showGauge
-        {
-            get { return burnVector_.deltaVGauge != null && burnVector_.deltaVGauge.gameObject.activeSelf == true; }
-        }
-
-        public float screenAnchorLeft
-        {
-            get { return navBallLeftBoundary_; }
-        }
-
-        public float screenAnchorRight
-        {
-            get { return showGauge ? navBallRightBoundaryWithGauge_ : navBallRightBoundary_; }
-        }
-
-        public float screenAnchorTop
-        {
-            get { return navBallTop_; }
         }
 
         public static GuiInfo instance
@@ -841,36 +830,35 @@ namespace KerbalFlightData
     [KSPAddon(KSPAddon.Startup.Flight, false)]
     public class DMFlightData : MonoBehaviour
     {
-        const double updateIntervall = 0.1;
-        double dtSinceLastUpdate = 0;
+        double dtSinceLastUpdate;
 
-        bool displayUI = true;
         bool displayUIByGuiEvent = true;
+        bool displayUIByToolbarClick = true;
 
         Data data;
         List<DataSource> dataSources = new List<DataSource>();
 
-        int timeSecondsPerDay = 0;
-        int timeSecondsPerYear = 0;
+        int timeSecondsPerDay;
+        int timeSecondsPerYear;
 
         static Toolbar.IButton toolbarButton;
 
         #region Config & Data Acquisition
 
-        void Awake()
+        void Awake() // Awake is called when the script instance is being loaded.
         {
+            DMDebug.Log2(name + " Awake!");
             dataSources.Clear();
-            //DMDebug.Log("DMFlightData Awake");
             bool hasFar = false;
             foreach (var assembly in AssemblyLoader.loadedAssemblies)
             {
-                //DMDebug.Log(assembly.name);
+                //DMDebug.Log2(assembly.name);
                 if (assembly.name == "FerramAerospaceResearch")
                 {
                     var types = assembly.assembly.GetExportedTypes();
                     foreach (Type t in types)
                     {
-                        //DMDebug.Log(t.FullName);
+                        //DMDebug.Log2(t.FullName);
                         if (t.FullName.Equals("ferram4.FARControlSys"))
                         {
                             dataSources.Add(new DataFAR(t));
@@ -912,92 +900,220 @@ namespace KerbalFlightData
             toolbarButton.Enabled = true;
             toolbarButton.OnClick += (e) =>
             {
-                enabled = !enabled;
+                displayUIByToolbarClick = !displayUIByToolbarClick;
+                enabled = displayUIByToolbarClick && displayUIByGuiEvent;
             };
 
-            GameEvents.onHideUI.Add(() =>
-            {
-                displayUIByGuiEvent = false;
-            });
+            GameEvents.onHideUI.Add(OnHideUI);
+            GameEvents.onShowUI.Add(OnShowUI);
 
-            GameEvents.onShowUI.Add(() =>
-            {
-                displayUIByGuiEvent = true;
-            });
+            LoadSettings();
         }
 
+        void OnHideUI()
+        {
+            displayUIByGuiEvent = false;
+            enabled = displayUIByToolbarClick && displayUIByGuiEvent;
+        }
 
-        public void SaveSettings()
+        void OnShowUI()
+        {
+            displayUIByGuiEvent = true;
+            enabled = displayUIByToolbarClick && displayUIByGuiEvent;
+        }
+
+        void SaveSettings()
         {
             ConfigNode settings = new ConfigNode();
             settings.name = "SETTINGS";
-            settings.AddValue("active", enabled);
+            settings.AddValue("active", displayUIByToolbarClick);
             settings.Save(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
         }
 
 
-        public void LoadSettings()
+        void LoadSettings()
         {
             ConfigNode settings = new ConfigNode();
             settings = ConfigNode.Load(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + @"\settings.cfg".Replace('/', '\\'));
 
             if (settings != null)
             {
-                if (settings.HasValue("active")) enabled = bool.Parse(settings.GetValue("active"));
+                if (settings.HasValue("active")) displayUIByToolbarClick = bool.Parse(settings.GetValue("active"));
             }
         }
 
-
-        void Start()
+        void Start() //Start is called on the frame when a script is enabled just before any of the Update methods is called the first time.
         {
-            LoadSettings();
+            DMDebug.Log2(name + " start!");
+        }
 
-            dtSinceLastUpdate = Double.PositiveInfinity;
+        void OnEnable() //	This function is called when the object becomes enabled and active.
+        {
+            DMDebug.Log2(name + " enabled!");
+            dtSinceLastUpdate = Double.PositiveInfinity; // full update next time
+        }
+
+        void OnDisable() //	This function is called when the behaviour becomes disabled () or inactive.
+        {
+            DMDebug.Log2(name + " disabled!");
+            ToggleDisplay(false);
+        }
+
+        void OnDestroy() // This function is called when the MonoBehaviour will be destroyed.
+        {
+            DMDebug.Log2(name + " destroyed!");
+            SaveSettings();
+
+            // fun fact: all my MonoBehaviour derivatives are destroyed automagically
+            guiInfo = null;
+            texts = null;
+            markers = null;
+            leftArea = null;
+            rightArea = null;
+
+            // unregister, or else errors occur
+            GameEvents.onHideUI.Remove(OnHideUI);
+            GameEvents.onShowUI.Remove(OnShowUI);
         }
 
 
-        public void OnDestroy()
+        bool CheckShouldDisplayBeOn()
         {
-            SaveSettings();
-            CleanupGUI();
+            if (!FlightGlobals.ready) return false;
+
+            Vessel vessel = FlightGlobals.ActiveVessel;
+            if (vessel == null) return false;
+
+            if (vessel.isEVA || vessel.state == Vessel.State.DEAD)
+            {
+                return false;
+            }
+            
+            if (/*!FlightUIModeController.Instance.navBall.expanded ||*/ !FlightUIModeController.Instance.navBall.enabled) return false;
+
+            switch (CameraManager.Instance.currentCameraMode)
+            {
+                case CameraManager.CameraMode.IVA:
+                    return false;
+            }
+
+            return true;
+        }
+
+        bool CheckFullUpdateTimer()
+        {
+            if (dtSinceLastUpdate > 0.33) // update every so and so fraction of a second
+            {
+                dtSinceLastUpdate = 0;
+                return true;
+            }
+            else return false;
+        }
+
+
+        void ToggleDisplay(bool on)
+        {   
+            // need to check if the areas are still there because on destruction of the scene they might be already gone without knowing
+            if (leftArea) leftArea.enableGameObject = on;
+            if (rightArea) rightArea.enableGameObject = on;                
         }
 
 
         void LateUpdate()
         {
-#if !DEBUG
-        if (dtSinceLastUpdate > updateIntervall) // update every so and so fraction of a second
-        {
-            dtSinceLastUpdate = 0;
-        }
-        else
-        {
             dtSinceLastUpdate += Time.deltaTime;
-            return;
-        }
-#endif
 
-            displayUI = false; // don't show anything unless some stuff is all right
-            if (!FlightGlobals.ready) return;
+            if (guiInfo == null)
+                SetupGUI();
+            
+            bool on = CheckShouldDisplayBeOn();
+            ToggleDisplay(on);
 
-            Vessel vessel = FlightGlobals.ActiveVessel;
-            if (vessel == null) return;
-
-            if (vessel.isEVA || vessel.state == Vessel.State.DEAD)
+            if (on)
             {
-                return;
+                int lastFontSize = guiInfo.fontSize;
+                guiInfo.Update();
+
+                if (lastFontSize != guiInfo.fontSize)
+                {
+                    foreach (var t in texts)
+                        t.fontSize = guiInfo.fontSize;
+                }
+                leftArea.transform.localPosition = new Vector2(guiInfo.screenAnchorLeft, guiInfo.screenAnchorBottom);
+                rightArea.transform.localPosition = new Vector2(guiInfo.screenAnchorRight, guiInfo.screenAnchorBottom);
             }
-            else displayUI = true; // at this point something should probably be shown
 
-            foreach (DataSource d in dataSources)
+            if (on && CheckFullUpdateTimer())
             {
-                d.Update(data, vessel);
+                foreach (DataSource d in dataSources)
+                {
+                    d.Update(data, FlightGlobals.ActiveVessel);
+                }
+
+                ++markerMaster;
+                if (data.isInAtmosphere && !data.isLanded)
+                {
+                    if (data.hasAerodynamics)
+                    {
+                        SetAndMark(TxtIdx.MACH, "Mach " + data.machNumber.ToString("F2"), MyStyleId.Emph);
+                    }
+                    if (data.hasAirAvailability)
+                    {
+                        String intakeLabel = "Intake";
+                        if (data.airAvailability < 2d) intakeLabel += "  " + (data.airAvailability * 100d).ToString("F0") + "%";
+                        SetAndMark(TxtIdx.AIR, intakeLabel, data.warnAir);
+                    }
+                    if (data.hasAerodynamics)
+                    {
+                        SetAndMark(TxtIdx.Q, "Q  " + FormatPressure(data.q), data.warnQ);
+                        SetAndMark(TxtIdx.STALL, "Stall", data.warnStall);
+                    }
+                    if (data.hasTemp)
+                    {
+                        SetAndMark(TxtIdx.TEMP, "T " + data.highestTemp.ToString("F0") + " °C", data.warnTemp);
+                    }
+                }
+
+                if (data.radarAltitude < 5000)
+                {
+                    SetAndMark(TxtIdx.ALT, "Alt " + FormatRadarAltitude(data.radarAltitude) + " R", data.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph);
+                }
+                else
+                {
+                    SetAndMark(TxtIdx.ALT, "Alt " + FormatAltitude(data.altitude), MyStyleId.Emph);
+                }
+
+                if (data.isAtmosphericLowLevelFlight == false)
+                {
+                    String timeLabel = "";
+                    switch (data.nextNode)
+                    {
+                        case Data.NextNode.Ap: timeLabel = "Ap"; break;
+                        case Data.NextNode.Pe: timeLabel = "Pe"; break;
+                        case Data.NextNode.Encounter: timeLabel = "En"; break;
+                        case Data.NextNode.Maneuver: timeLabel = "Man"; break;
+                        case Data.NextNode.Escape: timeLabel = "Esc"; break;
+                    }
+                    timeLabel = "T" + timeLabel + " -";
+                    SetAndMark(TxtIdx.TNODE, timeLabel + FormatTime(data.timeToNode), MyStyleId.Plain);
+                    if (data.nextNode == Data.NextNode.Ap || data.nextNode == Data.NextNode.Pe)
+                    {
+                        SetAndMark(TxtIdx.AP, "Ap " + FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain);
+                        SetAndMark(TxtIdx.PE, "Pe " + FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain);
+                    }
+                }
+
+                for (int i = 0; i < texts.Length; ++i)
+                {
+                    texts[i].enableGameObject = (markers[i] == markerMaster);
+                }
             }
 
 #if DEBUG
             if (Input.GetKeyDown(KeyCode.I))
             {
-                guiInfo = new GuiInfo();
+                guiInfo = GuiInfo.instance;
+                guiInfo.Init();
             }
             if (Input.GetKeyDown(KeyCode.O))
             {
@@ -1016,11 +1132,15 @@ namespace KerbalFlightData
                 //int indent;
                 //dbg.PrintGameObjectHierarchUp(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, out indent);
                 //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, indent);
-                dbg.Out("---------------------------------------------------------", 0);
+                //dbg.Out("---------------------------------------------------------", 0);
                 dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
                 dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
                 dbg.Out("---------------------------------------------------------", 0);
                 dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
+                dbg.Out("---------------------------------------------------------", 0);
+                var fonts = FindObjectsOfType(typeof(Font)) as Font[];
+                foreach (Font font in fonts)
+                    dbg.Out(font.name, 1);
                 var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
                 f.Write(dbg.ToString());
                 f.Close();
@@ -1121,156 +1241,55 @@ namespace KerbalFlightData
 
         #region GUI
 
-        const float windowBottomOffset = 5f;
-
         GuiInfo guiInfo;
-        KFIText kfiMach, kfiAlt, kfiAir, kfiStall, kfiQ, kfiTemp, kfiTNode, kfiAp, kfiPe;
+        KFIText[] texts = null;
+        int[]   markers = null;
+        int markerMaster = 0;
         KFIArea leftArea, rightArea;
 
+        static class TxtIdx
+        {
+            public const int MACH = 0, ALT = 1, AIR = 2, STALL = 3, Q = 4, TEMP = 5, TNODE = 6, AP = 7, PE = 8;
+        };
 
         void SetupGUI()
         {
+            DMDebug.Log2("SetupGUI");
             guiInfo = GuiInfo.instance;
             guiInfo.Init();
 
             leftArea = KFIArea.Create("left", new Vector2(guiInfo.screenAnchorLeft, 0f), TextAlignment.Right, null);
             rightArea = KFIArea.Create("right", new Vector2(guiInfo.screenAnchorRight, 0f), TextAlignment.Left, null);
 
-            kfiAlt = KFIText.Create("alt", MyStyleId.Emph);
-            kfiMach = KFIText.Create("mach", MyStyleId.Emph);
-            kfiAir = KFIText.Create("air", MyStyleId.Greyed);
-            kfiStall = KFIText.Create("stall", MyStyleId.Greyed);
-            kfiQ = KFIText.Create("q", MyStyleId.Greyed);
-            kfiTemp = KFIText.Create("temp", MyStyleId.Greyed);
-            kfiTNode = KFIText.Create("tnode", MyStyleId.Plain);
-            kfiAp = KFIText.Create("ap", MyStyleId.Plain);
-            kfiPe = KFIText.Create("pe", MyStyleId.Plain);
+            texts = new KFIText[9];
+            texts[TxtIdx.ALT] = KFIText.Create("alt", MyStyleId.Emph);
+            texts[TxtIdx.MACH] = KFIText.Create("mach", MyStyleId.Emph);
+            texts[TxtIdx.AIR] = KFIText.Create("air", MyStyleId.Greyed);
+            texts[TxtIdx.STALL] = KFIText.Create("stall", MyStyleId.Greyed);
+            texts[TxtIdx.Q] = KFIText.Create("q", MyStyleId.Greyed);
+            texts[TxtIdx.TEMP] = KFIText.Create("temp", MyStyleId.Greyed);
+            texts[TxtIdx.TNODE] = KFIText.Create("tnode", MyStyleId.Plain);
+            texts[TxtIdx.AP] = KFIText.Create("ap", MyStyleId.Plain);
+            texts[TxtIdx.PE] = KFIText.Create("pe", MyStyleId.Plain);
 
-            leftArea.Add(kfiAlt);
-            leftArea.Add(kfiTNode);
-            leftArea.Add(kfiAp);
-            leftArea.Add(kfiPe);
-            rightArea.Add(kfiMach);
-            rightArea.Add(kfiAir);
-            rightArea.Add(kfiStall);
-            rightArea.Add(kfiQ);
-            rightArea.Add(kfiTemp);
+            leftArea.Add(texts[TxtIdx.ALT]);
+            leftArea.Add(texts[TxtIdx.TNODE]);
+            leftArea.Add(texts[TxtIdx.AP]);
+            leftArea.Add(texts[TxtIdx.PE]);
+            rightArea.Add(texts[TxtIdx.MACH]);
+            rightArea.Add(texts[TxtIdx.AIR]);
+            rightArea.Add(texts[TxtIdx.STALL]);
+            rightArea.Add(texts[TxtIdx.Q]);
+            rightArea.Add(texts[TxtIdx.TEMP]);
 
-            //DMDebug.Log("kfimach = " + kfiMach == null ? "null" : kfiMach.ToString());
-            /* //not going to happen ... 
-             * // i'm trying to set up a Font instance with a custom bitmap font, but unluckly this draws absolutely nothing on screen, no error as well.
-            theFont = new Font("DMFont");
-            byte[] fubar = ((Texture2D)GUI.skin.font.material.mainTexture).EncodeToPNG();
-            KSP.IO.File.WriteAllBytes<DMFlightData>(fubar, "shit.png"); // as if this was going to work ... it doesn't ...
-            // next try
-            Texture2D fontTex = GameDatabase.Instance.GetTexture("KerbalFlightData/Textures/plain_white", false);
-            fontTex.filterMode = FilterMode.Bilinear;
-            DMDebug.Log(fontTex == null ? "fontTex = null" : fontTex.ToString());
-            DMDebug.Log(GUI.skin.font.material == null ? "s.font.material = null" : GUI.skin.font.material.ToString());
-            theFont.characterInfo = new CharacterInfo[1];
-            theFont.characterInfo[0].index = 65; // this is the decimal code for an 'A'
-            theFont.characterInfo[0].uv = new Rect(0.527f, 0.156f, 0.054f, 0.125f);
-            theFont.characterInfo[0].width = 8f;
-            theFont.characterInfo[0].vert = new Rect(0f, -2f, 10f, -15f);
-            theFont.characterInfo[0].size = 12;
-            theFont.characterInfo[0].style = FontStyle.Normal;
-            theFont.material = new Material(GUI.skin.font.material);
-            theFont.material.mainTexture = fontTex; */
-
+            markers = new int[9];
         }
 
-        void CleanupGUI()
+        void SetAndMark(int id, string txt, int styleId)
         {
-            guiInfo = null;
-            KFIArea.Destroy(leftArea);
-            KFIArea.Destroy(rightArea);
-            kfiMach = kfiAlt = kfiAir = kfiStall = kfiQ = kfiTemp = kfiTNode = kfiAp = kfiPe = null;
-        }
-
-
-        protected void OnGUI()
-        {
-            // configures the layout here
-            if (Event.current.type != EventType.Repaint) return; // one of these events is sent per frame. All other events should be ignored.
-            //DMDebug.Log("Repaint Event");
-
-            if (!displayUI || !displayUIByGuiEvent) return;
-            {
-
-                if (!FlightUIModeController.Instance.navBall.expanded || !FlightUIModeController.Instance.navBall.enabled) return;
-
-                switch (CameraManager.Instance.currentCameraMode)
-                {
-                    case CameraManager.CameraMode.IVA:
-                        return;
-                }
-            }
-
-            if (guiInfo == null)
-                SetupGUI();
-            if (guiInfo.hasChanged)
-                guiInfo.Update();
-            //DMDebug.Log("guiInfo = " + (guiInfo == null ? "null" : guiInfo.ToString()));
-
-            foreach (var t in leftArea.items)
-                t.enabled = false;
-            foreach (var t in rightArea.items)
-                t.enabled = false;
-
-            if (data.isInAtmosphere && !data.isLanded)
-            {
-                if (data.hasAerodynamics)
-                {
-                    kfiMach.text = "Mach " + data.machNumber.ToString("F2");
-                }
-                if (data.hasAirAvailability)
-                {
-                    String intakeLabel = "Intake";
-                    if (data.airAvailability < 2d) intakeLabel += "  " + (data.airAvailability * 100d).ToString("F0") + "%";
-                    kfiAir.SetStyledTextAndEnable(intakeLabel, data.warnAir);
-                }
-                if (data.hasAerodynamics)
-                {
-                    kfiQ.SetStyledTextAndEnable("Q  " + FormatPressure(data.q), data.warnQ);
-                    kfiStall.SetStyledTextAndEnable("Stall", data.warnStall);
-                }
-                if (data.hasTemp)
-                {
-                    kfiTemp.SetStyledTextAndEnable("T " + data.highestTemp.ToString("F0") + " °C", data.warnTemp);
-                }
-            }
-
-            if (data.radarAltitude < 5000)
-            {
-                kfiAlt.SetStyledTextAndEnable("Alt " + FormatRadarAltitude(data.radarAltitude) + " R", data.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph);
-            }
-            else
-            {
-                kfiAlt.SetStyledTextAndEnable("Alt " + FormatAltitude(data.altitude), MyStyleId.Emph);
-            }
-
-            if (data.isAtmosphericLowLevelFlight == false)
-            {
-                String timeLabel = "";
-                switch (data.nextNode)
-                {
-                    case Data.NextNode.Ap: timeLabel = "Ap"; break;
-                    case Data.NextNode.Pe: timeLabel = "Pe"; break;
-                    case Data.NextNode.Encounter: timeLabel = "En"; break;
-                    case Data.NextNode.Maneuver: timeLabel = "Man"; break;
-                    case Data.NextNode.Escape: timeLabel = "Esc"; break;
-                }
-                timeLabel = "T" + timeLabel + " -";
-                kfiTNode.SetStyledTextAndEnable(timeLabel + FormatTime(data.timeToNode), MyStyleId.Plain);
-                if (data.nextNode == Data.NextNode.Ap || data.nextNode == Data.NextNode.Pe)
-                {
-                    kfiAp.SetStyledTextAndEnable("Ap " + FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain);
-                    kfiPe.SetStyledTextAndEnable("Pe " + FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain);
-                }
-            }
-
-            leftArea.transform.localPosition = new Vector2(guiInfo.screenAnchorLeft, guiInfo.screenAnchorTop);
-            rightArea.transform.localPosition = new Vector2(guiInfo.screenAnchorRight, guiInfo.screenAnchorTop);
+            markers[id] = markerMaster;
+            texts[id].text = txt;
+            texts[id].styleId = styleId;
         }
 
         #endregion
@@ -1278,3 +1297,25 @@ namespace KerbalFlightData
 
 
 }
+
+
+//DMDebug.Log("kfimach = " + kfiMach == null ? "null" : kfiMach.ToString());
+/* //not going to happen ... 
+ * // i'm trying to set up a Font instance with a custom bitmap font, but unluckly this draws absolutely nothing on screen, no error as well.
+theFont = new Font("DMFont");
+byte[] fubar = ((Texture2D)GUI.skin.font.material.mainTexture).EncodeToPNG();
+KSP.IO.File.WriteAllBytes<DMFlightData>(fubar, "shit.png"); // as if this was going to work ... it doesn't ...
+// next try
+Texture2D fontTex = GameDatabase.Instance.GetTexture("KerbalFlightData/Textures/plain_white", false);
+fontTex.filterMode = FilterMode.Bilinear;
+DMDebug.Log(fontTex == null ? "fontTex = null" : fontTex.ToString());
+DMDebug.Log(GUI.skin.font.material == null ? "s.font.material = null" : GUI.skin.font.material.ToString());
+theFont.characterInfo = new CharacterInfo[1];
+theFont.characterInfo[0].index = 65; // this is the decimal code for an 'A'
+theFont.characterInfo[0].uv = new Rect(0.527f, 0.156f, 0.054f, 0.125f);
+theFont.characterInfo[0].width = 8f;
+theFont.characterInfo[0].vert = new Rect(0f, -2f, 10f, -15f);
+theFont.characterInfo[0].size = 12;
+theFont.characterInfo[0].style = FontStyle.Normal;
+theFont.material = new Material(GUI.skin.font.material);
+theFont.material.mainTexture = fontTex; */
