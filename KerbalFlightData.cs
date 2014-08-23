@@ -782,7 +782,7 @@ namespace KerbalFlightData
         int timeSecondsPerDay;
         int timeSecondsPerYear;
 
-        const float navballWidth = 0.07f;
+        const float navballWidth = 0.072f;
         const float navballGaugeWidth = 0.030f;
         const float navballGaugeWidthNonscaling = 0.030f;
         const int baselineFontSize = 16; // font size @ "normal" UI scale setting
@@ -866,7 +866,11 @@ namespace KerbalFlightData
             // reference GUI size - the normal KSP setting.
             float anchorScale = ScreenSafeUI.fetch.centerAnchor.bottom.localScale.x;
             uiScalingFactor = 0.6f / camera.orthographicSize; // 0.6 = orthographicSize for "normal" UI scale setting
+            uiScalingFactor *= ((float)Screen.height)/Screen.width*1920f/1080f;
             uiScalingFactor *= anchorScale; // scale font with navball
+            DMDebug.Log2("uiScalingFactor = " + uiScalingFactor + "\n" +
+                         "1/aspect = " + (((float)Screen.height) / Screen.width) + "\n" +
+                         "orthoSize = " + camera.orthographicSize);
 
             // update the anchor positions and the required font size
             Vector3 p = camera.WorldToViewportPoint(navballGameObject.transform.position);
@@ -1323,7 +1327,7 @@ namespace KerbalFlightData
             double tmpAir = -1;
             texts[TxtIdx.AIR] = KFIText.Create("air", MyStyleId.Greyed,
                 (Data d) => new KFIContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
-                (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
+                (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
 
             int tmpStall = -1;
             texts[TxtIdx.STALL] = KFIText.Create("stall", MyStyleId.Greyed,
