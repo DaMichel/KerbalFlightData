@@ -184,6 +184,16 @@ namespace KerbalFlightData
             Vector3 p1 = cam.ScreenToWorldPoint(s);
             return p1-p0;
         }
+
+        public static bool AlmostEqual(double a, double b, double eps)
+        {
+            return Math.Abs(a-b) < eps;
+        }
+
+        public static bool AlmostEqualRel(double a, double b, double eps)
+        {
+            return Math.Abs(a-b) <= (Math.Abs(a)+Math.Abs(b))*eps;
+        }
     };
 
     #endregion
@@ -502,6 +512,17 @@ namespace KerbalFlightData
     };
 
 
+    public struct KFIContent
+    {
+        public KFIContent(string text_, int styleId_)
+        {
+            this.text = text_;
+            this.styleId = styleId_;
+        }
+        public readonly string text;
+        public readonly int styleId;
+    };
+
 
     /* this scripts manages a piece of text. It allocates the main text plus some clones for shadowing. 
      * The clones get a dark color and are drawn behind the main text with a slight offset */
@@ -514,8 +535,10 @@ namespace KerbalFlightData
         int        styleId_ = -1;
         Rect       screenRect_;
         int change_ = 0, last_change_checked_ = -1; // with this i check if the screen space rect must be recomputed
+        Func<Data, KFIContent> getContent_;
+        Func<Data, bool> hasChanged_;
 
-        public static KFIText Create(string id, int styleId)
+        public static KFIText Create(string id, int styleId, Func<Data, KFIContent> getContent, Func<Data, bool> hasChanged)
         {
             GameObject textGO = new GameObject("KFI-" + id);
             textGO.layer = 12; // navball layer
@@ -544,30 +567,27 @@ namespace KerbalFlightData
             kfi.gt3_.anchor = TextAnchor.LowerLeft;
             kfi.gt3_.alignment = TextAlignment.Left;
 
-            kfi.styleId = styleId;
+            kfi.getContent_ = getContent;
+            kfi.hasChanged_ = hasChanged;
+
             return kfi;
         }
         
-        public void OnDestroy()
-        {
-            DMDebug.Log2(this.name + " OnDestroy");
-            // release links to make it easier for the gc
-            gt1_ = null;
-            gt2_ = null;
-            gt3_ = null;
-        }
 
-        public int styleId
+        public void UpdateText(Data data)
         {
-            set
+            if (hasChanged_(data))
             {
-                if (this.styleId_ != value)  // careful because of potentially costly update
+                DMDebug.Log2(name + " has changed");
+                KFIContent c = getContent_(data);
+
+                if (this.styleId_ != c.styleId)  // careful because of potentially costly update
                 {
-                    this.styleId_ = value;
-                    GUIStyle s = GuiInfo.instance.styles[value];
+                    this.styleId_ = c.styleId;
+                    GUIStyle s = GuiInfo.instance.styles[c.styleId];
                     this.gt1_.fontStyle = s.fontStyle;
-                    this.gt1_.fontSize  = GuiInfo.instance.fontSize;
-                    this.gt1_.font      = s.font;
+                    this.gt1_.fontSize = GuiInfo.instance.fontSize;
+                    this.gt1_.font = s.font;
                     this.gt1_.material.color = s.active.textColor;
 
                     this.gt2_.fontStyle = s.fontStyle;
@@ -581,31 +601,27 @@ namespace KerbalFlightData
                     this.gt3_.font = s.font;
                     this.gt3_.material.color = XKCDColors.DarkGrey;
                     this.gt3_.pixelOffset = new Vector2(1f, -1f);
-                    change_++;
-                }
+                }                
+                // not going to compare here
+                this.gt1_.text = c.text;
+                this.gt2_.text = c.text;
+                this.gt3_.text = c.text;
+                ++change_;
             }
-            get 
-            {
-                return this.styleId_;
-            }
+            //else
+                //DMDebug.Log2(name + " unchanged");
         }
-        
-        public string text
+
+
+        public void OnDestroy()
         {
-            set
-            {
-                if (value != this.gt1_.text) // careful because of costly update
-                {
-                    this.gt1_.text = value;
-                    this.gt2_.text = value;
-                    this.gt3_.text = value;
-                    ++change_;
-                }
-            }
-            get 
-            {
-                return this.gt1_.text;
-            }
+            DMDebug.Log2(this.name + " OnDestroy");
+            // release links to make it easier for the gc
+            gt1_ = null;
+            gt2_ = null;
+            gt3_ = null;
+            hasChanged_ = null;
+            getContent_ = null;
         }
 
         public int fontSize
@@ -756,6 +772,9 @@ namespace KerbalFlightData
         GameObject navballGameObject = null;
         float uiScalingFactor;
 
+        int timeSecondsPerDay;
+        int timeSecondsPerYear;
+
         const float navballWidth = 0.07f;
         const float navballGaugeWidth = 0.030f;
         const float navballGaugeWidthNonscaling = 0.030f;
@@ -773,6 +792,21 @@ namespace KerbalFlightData
 
         public void Init()
         {
+            if (GameSettings.KERBIN_TIME)
+            {
+                CelestialBody b = FlightGlobals.Bodies.Find((b_) => b_.name == "Kerbin");
+                timeSecondsPerDay = (int)b.rotationPeriod;
+                timeSecondsPerYear = (int)b.orbit.period;
+                // when this fails an exception should be visible in the debug log and 
+                // the time to the next node display should show NaNs and Infs so it should
+                // be pretty clear when something goes wrong at this place
+            }
+            else
+            {
+                timeSecondsPerDay = 24 * 3600;
+                timeSecondsPerYear = timeSecondsPerDay * 365;
+            }
+
             GameObject go = GameObject.Find("speedText");
             prototypeStyle = go.GetComponent<ScreenSafeGUIText>().textStyle;
 
@@ -844,8 +878,98 @@ namespace KerbalFlightData
         {
             get { return instance_; }
         }
-    }
 
+
+        #region GUIUtil
+        public static String FormatPressure(double x)
+        {
+            if (x > 1.0e6)
+            {
+                x *= 1.0e-6;
+                return x.ToString(x < 10 ? "F1" : "F0") + " MPa";
+            }
+            else
+            {
+                x *= 1.0e-3;
+                return x.ToString(x < 10 ? "F1" : "F0") + " kPa";
+            }
+        }
+
+        public static String FormatAltitude(double x)
+        {
+            double a = Math.Abs(x);
+            if (a >= 1.0e9)
+            {
+                x *= 1.0e-9;
+                a *= 1.0e-9;
+                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Gm";
+            }
+            if (a >= 1.0e6)
+            {
+                x *= 1.0e-6;
+                a *= 1.0e-6;
+                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Mm";
+            }
+            else
+            {
+                x *= 1.0e-3;
+                a *= 1.0e-3;
+                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
+            }
+        }
+
+
+        public static String FormatRadarAltitude(double x)
+        {
+            double a = Math.Abs(x);
+            if (a >= 1.0e3)
+            {
+                x *= 1.0e-3;
+                a *= 1.0e-3;
+                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
+            }
+            else
+            {
+                return x.ToString("F0") + " m";
+            }
+        }
+
+
+        public static String FormatTime(double x_)
+        {
+            const int MIN = 60;
+            const int H = 3600;
+            int D = instance.timeSecondsPerDay;
+            int Y = instance.timeSecondsPerYear;
+
+            int x = (int)x_;
+            int y, d, m, h, s;
+            y = x / Y;
+            x = x % Y;
+            d = x / D;
+            x = x % D;
+            h = x / H;
+            x = x % H;
+            m = x / MIN;
+            x = x % MIN;
+            s = x;
+            int size = 3;
+            string[] arr = new string[size];
+            int idx = 0;
+            if (y > 0)
+                arr[idx++] = y.ToString() + "y";
+            if (d > 0 || idx > 0)
+                arr[idx++] = d.ToString() + "d";
+            if ((h > 0 || idx > 0) && idx < size)
+                arr[idx++] = h.ToString() + "h";
+            if ((m > 0 || idx > 0) && idx < size)
+                arr[idx++] = m.ToString() + "m";
+            if ((s > 0 || idx > 0) && idx < size)
+                arr[idx++] = s.ToString() + "s";
+            return string.Join(" ", arr, 0, idx);
+        }
+        #endregion
+    }
 
     #endregion
 
@@ -860,9 +984,6 @@ namespace KerbalFlightData
 
         Data data;
         List<DataSource> dataSources = new List<DataSource>();
-
-        int timeSecondsPerDay;
-        int timeSecondsPerYear;
 
         static Toolbar.IButton toolbarButton;
 
@@ -908,21 +1029,6 @@ namespace KerbalFlightData
             dataSources.Add(new DataSetupWarnings());
 
             data = new Data();
-
-            if (GameSettings.KERBIN_TIME)
-            {
-                CelestialBody b = FlightGlobals.Bodies.Find((b_) => b_.name == "Kerbin");
-                timeSecondsPerDay = (int)b.rotationPeriod;
-                timeSecondsPerYear = (int)b.orbit.period;
-                // when this fails an exception should be visible in the debug log and 
-                // the time to the next node display should show NaNs and Infs so it should
-                // be pretty clear when something goes wrong at this place
-            }
-            else
-            {
-                timeSecondsPerDay = 24 * 3600;
-                timeSecondsPerYear = timeSecondsPerDay * 365;
-            }
 
             toolbarButton = Toolbar.ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
             toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
@@ -1043,7 +1149,7 @@ namespace KerbalFlightData
 
         bool CheckFullUpdateTimer()
         {
-            if (dtSinceLastUpdate > 0.25) // update every so and so fraction of a second
+            if (dtSinceLastUpdate > 0.1) // update every so and so fraction of a second
             {
                 dtSinceLastUpdate = 0;
                 return true;
@@ -1058,15 +1164,6 @@ namespace KerbalFlightData
             if (leftArea) leftArea.enableGameObject = on;
             if (rightArea) rightArea.enableGameObject = on;                
         }
-
-        // set text strings, style and mark as alive
-        void SetAndMark(int id, string txt, int styleId) 
-        {
-            markers[id] = markerMaster;
-            texts[id].text = txt;
-            texts[id].styleId = styleId;
-        }
-
 
         void LateUpdate()
         {
@@ -1110,58 +1207,37 @@ namespace KerbalFlightData
                 {
                     if (data.hasAerodynamics)
                     {
-                        SetAndMark(TxtIdx.MACH, "Mach " + data.machNumber.ToString("F2"), MyStyleId.Emph);
+                        markers[TxtIdx.MACH] = markerMaster;
+
                     }
                     if (data.hasAirAvailability)
                     {
-                        String intakeLabel = "Intake";
-                        if (data.airAvailability < 2d) intakeLabel += "  " + (data.airAvailability * 100d).ToString("F0") + "%";
-                        SetAndMark(TxtIdx.AIR, intakeLabel, data.warnAir);
+                        markers[TxtIdx.AIR] = markerMaster;
+
                     }
                     if (data.hasAerodynamics)
                     {
-                        SetAndMark(TxtIdx.Q, "Q  " + FormatPressure(data.q), data.warnQ);
-                        SetAndMark(TxtIdx.STALL, "Stall", data.warnStall);
+                        markers[TxtIdx.Q] = markerMaster;
+                        markers[TxtIdx.STALL] = markerMaster;
+
                     }
                     if (data.hasTemp)
                     {
-                        SetAndMark(TxtIdx.TEMP, "T " + data.highestTemp.ToString("F0") + " °C", data.warnTemp);
+                        markers[TxtIdx.TEMP] = markerMaster;
                     }
                 }
-
-                if (data.radarAltitude < 5000)
-                {
-                    SetAndMark(TxtIdx.ALT, "Alt " + FormatRadarAltitude(data.radarAltitude) + " R", data.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph);
-                }
-                else
-                {
-                    SetAndMark(TxtIdx.ALT, "Alt " + FormatAltitude(data.altitude), MyStyleId.Emph);
-                }
-
+                markers[TxtIdx.ALT] = markerMaster;
                 if (data.isAtmosphericLowLevelFlight == false)
                 {
-                    String timeLabel = "";
-                    switch (data.nextNode)
-                    {
-                        case Data.NextNode.Ap: timeLabel = "Ap"; break;
-                        case Data.NextNode.Pe: timeLabel = "Pe"; break;
-                        case Data.NextNode.Encounter: timeLabel = "En"; break;
-                        case Data.NextNode.Maneuver: timeLabel = "Man"; break;
-                        case Data.NextNode.Escape: timeLabel = "Esc"; break;
-                    }
-                    timeLabel = "T" + timeLabel + " -";
-                    SetAndMark(TxtIdx.TNODE, timeLabel + FormatTime(data.timeToNode), MyStyleId.Plain);
-                    if (data.nextNode == Data.NextNode.Ap || data.nextNode == Data.NextNode.Pe)
-                    {
-                        SetAndMark(TxtIdx.AP, "Ap " + FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain);
-                        SetAndMark(TxtIdx.PE, "Pe " + FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain);
-                    }
+                    markers[TxtIdx.TNODE] = markers[TxtIdx.AP] = markers[TxtIdx.PE] = markerMaster;
                 }
 
-                // disable unmarked texts
+                // disable unmarked texts, update marked ones
                 for (int i = 0; i < texts.Length; ++i)
                 {
                     texts[i].enableGameObject = (markers[i] == markerMaster);
+                    if (markers[i] == markerMaster)
+                        texts[i].UpdateText(data);
                 }
 
                 leftArea.UpdateLayout();
@@ -1207,6 +1283,22 @@ namespace KerbalFlightData
 #endif
         }
 
+        static bool SetIf<T1>(ref T1 dst, T1 src, bool b)
+        {
+            if (b) { dst = src; return true; }
+            else return false;
+        }
+
+        static bool SetIf<T1, T2>(ref T1 dst1, ref T2 dst2, T1 src1, T2 src2, bool b)
+        {
+            if (b) { 
+                dst1 = src1; 
+                dst2 = src2;
+                return true; 
+            }
+            else return false;
+        }
+
         void SetupGUI()
         {
             DMDebug.Log2("SetupGUI");
@@ -1214,17 +1306,72 @@ namespace KerbalFlightData
 
             leftArea = KFIArea.Create("left", new Vector2(GuiInfo.instance.screenAnchorLeft, 0f), TextAlignment.Right, null);
             rightArea = KFIArea.Create("right", new Vector2(GuiInfo.instance.screenAnchorRight, 0f), TextAlignment.Left, null);
-
             texts = new KFIText[9];
-            texts[TxtIdx.ALT] = KFIText.Create("alt", MyStyleId.Emph);
-            texts[TxtIdx.MACH] = KFIText.Create("mach", MyStyleId.Emph);
-            texts[TxtIdx.AIR] = KFIText.Create("air", MyStyleId.Greyed);
-            texts[TxtIdx.STALL] = KFIText.Create("stall", MyStyleId.Greyed);
-            texts[TxtIdx.Q] = KFIText.Create("q", MyStyleId.Greyed);
-            texts[TxtIdx.TEMP] = KFIText.Create("temp", MyStyleId.Greyed);
-            texts[TxtIdx.TNODE] = KFIText.Create("tnode", MyStyleId.Plain);
-            texts[TxtIdx.AP] = KFIText.Create("ap", MyStyleId.Plain);
-            texts[TxtIdx.PE] = KFIText.Create("pe", MyStyleId.Plain);
+
+            double tmpMach = -1;
+            texts[TxtIdx.MACH] = KFIText.Create("mach", MyStyleId.Emph,
+                (Data d) => new KFIContent("Mach " + d.machNumber.ToString("F2"), MyStyleId.Emph),
+                (Data d) => SetIf(ref tmpMach, d.machNumber, !Util.AlmostEqual(d.machNumber, tmpMach, 0.01)));
+
+            double tmpAir = -1;
+            texts[TxtIdx.AIR] = KFIText.Create("air", MyStyleId.Greyed,
+                (Data d) => new KFIContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
+                (Data d) => SetIf(ref tmpAir, d.airAvailability, !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01)));
+
+            int tmpStall = -1;
+            texts[TxtIdx.STALL] = KFIText.Create("stall", MyStyleId.Greyed,
+                (Data d) => new KFIContent("Stall", d.warnStall),
+                (Data d) => SetIf(ref tmpStall, d.warnStall, d.warnStall != tmpStall));
+
+            double tmpQ = -1;
+            texts[TxtIdx.Q] = KFIText.Create("q", MyStyleId.Greyed,
+                (Data d) => new KFIContent("Q  " + GuiInfo.FormatPressure(d.q), d.warnQ),
+                (Data d) => SetIf(ref tmpQ, d.q, !Util.AlmostEqualRel(d.q, tmpQ, 0.01)));
+
+            double tmpTemp = -1;
+            int    tmpWarnTemp = -1;
+            texts[TxtIdx.TEMP] = KFIText.Create("temp", MyStyleId.Greyed,
+                (Data d) => new KFIContent("T " + d.highestTemp.ToString("F0") + " °C", d.warnTemp),
+                (Data d) => SetIf(ref tmpTemp, ref tmpWarnTemp, d.highestTemp, d.warnTemp, !Util.AlmostEqual(d.highestTemp, tmpTemp, 1) || d.warnTemp != tmpWarnTemp));
+
+
+            double tmpAlt = -1;
+            texts[TxtIdx.ALT] = KFIText.Create("alt", MyStyleId.Emph,
+                (Data d) => new KFIContent("Alt " + (d.radarAltitude < 5000 ? (GuiInfo.FormatRadarAltitude(d.radarAltitude) + " R") : GuiInfo.FormatAltitude(d.altitude)), d.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph),
+                (Data d) => SetIf(ref tmpAlt, d.altitude, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.0001)));
+
+
+            Func<Data, KFIContent> fmtTime = (Data d) =>
+            {
+                String timeLabel = "";
+                switch (d.nextNode)
+                {
+                    case Data.NextNode.Ap: timeLabel = "Ap"; break;
+                    case Data.NextNode.Pe: timeLabel = "Pe"; break;
+                    case Data.NextNode.Encounter: timeLabel = "En"; break;
+                    case Data.NextNode.Maneuver: timeLabel = "Man"; break;
+                    case Data.NextNode.Escape: timeLabel = "Esc"; break;
+                }
+                timeLabel = "T" + timeLabel + " -" + GuiInfo.FormatTime(d.timeToNode);
+                return new KFIContent(timeLabel, MyStyleId.Plain);
+            };
+
+            double tmpTNode = -1;
+            texts[TxtIdx.TNODE] = KFIText.Create("tnode", MyStyleId.Plain,
+                fmtTime,
+                (Data d) => SetIf(ref tmpTNode, d.timeToNode, !Util.AlmostEqual(d.timeToNode, tmpTNode, 1)));
+
+            Data.NextNode tmpNextNode1 = Data.NextNode.Maneuver;
+            double tmpAp = -1;
+            texts[TxtIdx.AP] = KFIText.Create("ap", MyStyleId.Plain,
+                (Data d) => new KFIContent("Ap " + GuiInfo.FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain),
+                (Data d) => SetIf(ref tmpAp, ref tmpNextNode1, d.apoapsis, d.nextNode, !Util.AlmostEqualRel(d.apoapsis, tmpAp, 0.0001) || d.nextNode != tmpNextNode1));
+
+            Data.NextNode tmpNextNode2 = Data.NextNode.Maneuver;
+            double tmpPe = 0;
+            texts[TxtIdx.PE] = KFIText.Create("pe", MyStyleId.Plain,
+                (Data d) => new KFIContent("Pe " + GuiInfo.FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
+                (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.0001) || d.nextNode != tmpNextNode2));
 
             leftArea.Add(texts[TxtIdx.ALT]);
             leftArea.Add(texts[TxtIdx.TNODE]);
@@ -1239,95 +1386,7 @@ namespace KerbalFlightData
             markers = new int[9];
         }
 
-        #region GUIUtil
-        protected static String FormatPressure(double x)
-        {
-            if (x > 1.0e6)
-            {
-                x *= 1.0e-6;
-                return x.ToString(x < 10 ? "F1" : "F0") + " MPa";
-            }
-            else
-            {
-                x *= 1.0e-3;
-                return x.ToString(x < 10 ? "F1" : "F0") + " kPa";
-            }
-        }
 
-        protected static String FormatAltitude(double x)
-        {
-            double a = Math.Abs(x);
-            if (a >= 1.0e9)
-            {
-                x *= 1.0e-9;
-                a *= 1.0e-9;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Gm";
-            }
-            if (a >= 1.0e6)
-            {
-                x *= 1.0e-6;
-                a *= 1.0e-6;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Mm";
-            }
-            else
-            {
-                x *= 1.0e-3;
-                a *= 1.0e-3;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
-            }
-        }
-
-
-        protected static String FormatRadarAltitude(double x)
-        {
-            double a = Math.Abs(x);
-            if (a >= 1.0e3)
-            {
-                x *= 1.0e-3;
-                a *= 1.0e-3;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
-            }
-            else
-            {
-                return x.ToString("F0") + " m";
-            }
-        }
-
-
-        protected String FormatTime(double x_)
-        {
-            const int MIN = 60;
-            const int H = 3600;
-            int D = timeSecondsPerDay;
-            int Y = timeSecondsPerYear;
-
-            int x = (int)x_;
-            int y, d, m, h, s;
-            y = x / Y;
-            x = x % Y;
-            d = x / D;
-            x = x % D;
-            h = x / H;
-            x = x % H;
-            m = x / MIN;
-            x = x % MIN;
-            s = x;
-            int size = 3;
-            string[] arr = new string[size];
-            int idx = 0;
-            if (y > 0)
-                arr[idx++] = y.ToString() + "y";
-            if (d > 0 || idx > 0)
-                arr[idx++] = d.ToString() + "d";
-            if ((h > 0 || idx > 0) && idx < size)
-                arr[idx++] = h.ToString() + "h";
-            if ((m > 0 || idx > 0) && idx < size)
-                arr[idx++] = m.ToString() + "m";
-            if ((s > 0 || idx > 0) && idx < size)
-                arr[idx++] = s.ToString() + "s";
-            return string.Join(" ", arr, 0, idx);
-        }
-        #endregion
     }
 
 
