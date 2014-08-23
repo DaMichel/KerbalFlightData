@@ -1174,7 +1174,7 @@ namespace KerbalFlightData
 
         void LateUpdate()
         {
-            dtSinceLastUpdate += Time.deltaTime;
+            dtSinceLastUpdate += Time.unscaledDeltaTime;
 
             if (!GuiInfo.instance.ready)
                 SetupGUI();
@@ -1323,7 +1323,7 @@ namespace KerbalFlightData
             double tmpAir = -1;
             texts[TxtIdx.AIR] = KFIText.Create("air", MyStyleId.Greyed,
                 (Data d) => new KFIContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
-                (Data d) => SetIf(ref tmpAir, d.airAvailability, !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01)));
+                (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
 
             int tmpStall = -1;
             texts[TxtIdx.STALL] = KFIText.Create("stall", MyStyleId.Greyed,
@@ -1345,7 +1345,7 @@ namespace KerbalFlightData
             double tmpAlt = -1;
             texts[TxtIdx.ALT] = KFIText.Create("alt", MyStyleId.Emph,
                 (Data d) => new KFIContent("Alt " + (d.radarAltitude < 5000 ? (GuiInfo.FormatRadarAltitude(d.radarAltitude) + " R") : GuiInfo.FormatAltitude(d.altitude)), d.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph),
-                (Data d) => SetIf(ref tmpAlt, d.altitude, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.0001)));
+                (Data d) => SetIf(ref tmpAlt, d.altitude, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001)));
 
 
             Func<Data, KFIContent> fmtTime = (Data d) =>
@@ -1372,13 +1372,13 @@ namespace KerbalFlightData
             double tmpAp = -1;
             texts[TxtIdx.AP] = KFIText.Create("ap", MyStyleId.Plain,
                 (Data d) => new KFIContent("Ap " + GuiInfo.FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain),
-                (Data d) => SetIf(ref tmpAp, ref tmpNextNode1, d.apoapsis, d.nextNode, !Util.AlmostEqualRel(d.apoapsis, tmpAp, 0.0001) || d.nextNode != tmpNextNode1));
+                (Data d) => SetIf(ref tmpAp, ref tmpNextNode1, d.apoapsis, d.nextNode, !Util.AlmostEqualRel(d.apoapsis, tmpAp, 0.001) || d.nextNode != tmpNextNode1));
 
             Data.NextNode tmpNextNode2 = Data.NextNode.Maneuver;
             double tmpPe = 0;
             texts[TxtIdx.PE] = KFIText.Create("pe", MyStyleId.Plain,
                 (Data d) => new KFIContent("Pe " + GuiInfo.FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
-                (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.0001) || d.nextNode != tmpNextNode2));
+                (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.001) || d.nextNode != tmpNextNode2));
 
             leftArea.Add(texts[TxtIdx.ALT]);
             leftArea.Add(texts[TxtIdx.TNODE]);
