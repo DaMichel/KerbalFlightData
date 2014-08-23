@@ -245,27 +245,34 @@ namespace KerbalFlightData
     {
         private Type FARControlSys = null;
         private bool farDataIsObtainedOkay = true;
+        private FieldInfo fieldControlSys; // of FARControlSys
+        private FieldInfo fieldQ, fieldMach, fieldAir, fieldStall;
 
         public DataFAR(Type FARControlSys_)
             : base()
         {
             FARControlSys = FARControlSys_;
+            fieldControlSys = FARControlSys.GetField("activeControlSys", BindingFlags.NonPublic | BindingFlags.Static);
+            foreach (var field in FARControlSys.GetFields(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public))
+            {
+                if (field.Name == "q")
+                    fieldQ = field;
+                else if (field.Name == "MachNumber")
+                    fieldMach = field;
+                else if (field.Name == "intakeDeficit")
+                    fieldAir = field;
+                else if (field.Name == "stallPercentage")
+                    fieldStall = field;
+            }
         }
 
         void GetFARData(Data data)
         {
-            var instance = FARControlSys.GetField("activeControlSys", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
-            foreach (var field in FARControlSys.GetFields(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public))
-            {
-                if (field.Name == "q")
-                    data.q = (double)field.GetValue(instance);
-                else if (field.Name == "MachNumber")
-                    data.machNumber = (double)field.GetValue(instance);
-                else if (field.Name == "intakeDeficit")
-                    data.airAvailability = (double)field.GetValue(null);
-                else if (field.Name == "stallPercentage")
-                    data.stallPercentage = (double)field.GetValue(null);
-            }
+            var instance = fieldControlSys.GetValue(null);
+            data.q = (double)fieldQ.GetValue(instance);
+            data.machNumber = (double)fieldMach.GetValue(instance);
+            data.airAvailability = (double)fieldAir.GetValue(null);
+            data.stallPercentage = (double)fieldStall.GetValue(null);
             data.hasAerodynamics = true;
             data.hasAirAvailability = true;
         }
