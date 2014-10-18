@@ -73,7 +73,7 @@ namespace KerbalFlightData
         bool IsOkayToExpand(string name, Type type)
         {
             if (!IsInterestingType(type)) return false;
-            if (name == "parent" || name == "root" || name == "target") return false;
+            //if (name == "parent" || name == "root" || name == "target") return false;
             return true;
         }
 
@@ -103,7 +103,7 @@ namespace KerbalFlightData
                 if (instance == null || CheckAndAddVisited(instance)) return;
 
                 var t = instance.GetType();
-                Out("+ " + instance.name + "(" + t.Name + ")", indent); //<" + instance.GetInstanceID() + ">"
+                Out("{ " + instance.name + "(" + t.Name + ")", indent); //<" + instance.GetInstanceID() + ">"
 
                 foreach (var field in t.GetFields(BindingFlags.Instance | BindingFlags.Public))
                 {
@@ -140,6 +140,7 @@ namespace KerbalFlightData
                         PrintHierarchy(comp, indent + 2);
                     }
                 }
+                Out("}", indent);
             }
             catch (Exception e)
             {
@@ -147,7 +148,7 @@ namespace KerbalFlightData
             }
         }
 
-        public String ToString()
+        public override String ToString()
         {
             return sb.ToString();
         }
@@ -685,7 +686,12 @@ namespace KerbalFlightData
         }
     };
 
-
+    
+    public enum VerticalAlignment 
+    {
+        Top = 1,
+        Bottom = -1
+    };
 
 
     /* This class represents the left/right text areas. Texts are managed as children (by Unity GameObjects).
@@ -694,6 +700,7 @@ namespace KerbalFlightData
     public class KFIArea : MonoBehaviour
     {
         public TextAlignment alignment;
+        public VerticalAlignment verticalAlignment = VerticalAlignment.Bottom;
         public List<KFIText> items;
         float maximalWidth = 0f;
 
@@ -719,18 +726,18 @@ namespace KerbalFlightData
             {
                 if (!t || !t.enableGameObject) continue;
                 Rect r = t.screenRect;
-                //DMDebug.Log2("r("+t.name+") = " + r.ToString());
                 w = Mathf.Max(w, r.width);
                 h += r.height;
             }
-            Vector2 p = Vector2.zero;
+            Vector2 p = Vector2.zero; // the current position of the child texts
             if (alignment == TextAlignment.Right) p.x -= w;
-            p.y += h;
+            if (verticalAlignment == VerticalAlignment.Bottom)
+                p.y += h;
             foreach (KFIText t in items)
             {
                 if (!t || !t.enableGameObject) continue;
-                t.localPosition = p;
                 p.y -= t.screenRect.height;
+                t.localPosition = p;
             }
             maximalWidth = w;
         }
@@ -791,8 +798,9 @@ namespace KerbalFlightData
         public int   fontSize;
         public float screenAnchorRight;
         public float screenAnchorLeft;
-        public float screenAnchorBottom;
+        public float screenAnchorVertical;
         public bool  ready = false;
+        public bool  anchorTop = false;
 
         public GUIStyle prototypeStyle;
         public GUIStyle[] styles = { null, null, null, null, null };
@@ -871,26 +879,40 @@ namespace KerbalFlightData
             DMDebug.Log2("uiScalingFactor = " + uiScalingFactor + "\n" +
                          "1/aspect = " + (((float)Screen.height) / Screen.width) + "\n" +
                          "orthoSize = " + camera.orthographicSize);
-
-            // update the anchor positions and the required font size
-            Vector3 p = camera.WorldToViewportPoint(navballGameObject.transform.position);
-            bool hasGauge = burnVector_.deltaVGauge != null && burnVector_.deltaVGauge.gameObject.activeSelf == true;
-            if (hasGauge)
-                screenAnchorRight = p.x + navballWidth * uiScalingFactor + navballGaugeWidth * uiScalingFactor + navballGaugeWidthNonscaling;
-            else
-                screenAnchorRight = p.x + navballWidth * uiScalingFactor;            
-            screenAnchorLeft   = p.x - navballWidth * uiScalingFactor;
-            screenAnchorBottom = p.y;
-
             fontSize = Mathf.RoundToInt(baselineFontSize * uiScalingFactor);
+
+            bool isIVA = CameraManager.Instance.currentCameraMode == CameraManager.CameraMode.IVA;
+
+            if (isIVA)
+            {
+                Vector3 p = camera.WorldToViewportPoint(ScreenSafeUI.fetch.centerAnchor.top.transform.position);
+                screenAnchorVertical = p.y - (10f/Screen.height);
+                float offset = 10f/Screen.width;
+                screenAnchorLeft   = p.x - offset;
+                screenAnchorRight  = p.x + offset;
+                anchorTop = true;
+            }
+            else
+            {
+                // update the anchor positions and the required font size
+                Vector3 p = camera.WorldToViewportPoint(navballGameObject.transform.position);
+                bool hasGauge = burnVector_.deltaVGauge != null && burnVector_.deltaVGauge.gameObject.activeSelf == true;
+                if (hasGauge)
+                    screenAnchorRight = p.x + navballWidth * uiScalingFactor + navballGaugeWidth * uiScalingFactor + navballGaugeWidthNonscaling;
+                else
+                    screenAnchorRight = p.x + navballWidth * uiScalingFactor;            
+                screenAnchorLeft   = p.x - navballWidth * uiScalingFactor;
+                screenAnchorVertical = p.y;
+                anchorTop = false;
+            }
+            
         }
 
         public static GuiInfo instance
         {
             get { return instance_; }
         }
-
-
+        
         #region GUIUtil
         public static String FormatPressure(double x)
         {
@@ -1146,13 +1168,7 @@ namespace KerbalFlightData
                 return false;
             }
             
-            if (/*!FlightUIModeController.Instance.navBall.expanded ||*/ !FlightUIModeController.Instance.navBall.enabled) return false;
-
-            switch (CameraManager.Instance.currentCameraMode)
-            {
-                case CameraManager.CameraMode.IVA:
-                    return false;
-            }
+            if (!FlightUIModeController.Instance.navBall.enabled) return false;
 
             return true;
         }
@@ -1202,8 +1218,10 @@ namespace KerbalFlightData
                 }
 
                 // attach areas to the navball basically
-                leftArea.transform.localPosition = new Vector2(guiInfo.screenAnchorLeft, guiInfo.screenAnchorBottom);
-                rightArea.transform.localPosition = new Vector2(guiInfo.screenAnchorRight, guiInfo.screenAnchorBottom);
+                leftArea.transform.localPosition = new Vector2(guiInfo.screenAnchorLeft, guiInfo.screenAnchorVertical);
+                rightArea.transform.localPosition = new Vector2(guiInfo.screenAnchorRight, guiInfo.screenAnchorVertical);
+                leftArea.verticalAlignment = guiInfo.anchorTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
+                rightArea.verticalAlignment = guiInfo.anchorTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
             }
 
             if (on && CheckFullUpdateTimer())
@@ -1264,23 +1282,28 @@ namespace KerbalFlightData
             if (Input.GetKeyDown(KeyCode.O))
             {
                 DMDebug dbg = new DMDebug();
-                //dbg.PrintHierarchy(ScreenSafeUI.fetch);
+                InternalSpeed spd = InternalSpeed.FindObjectsOfType<InternalSpeed>().FirstOrDefault();
+                dbg.Out(spd.textObject.text.text, 0);
+                dbg.Out("---------------------------------------------------------", 0);
+                dbg.PrintHierarchy(spd);
+                //dbg.PrintHierarchy(InternalCamera.Instance);
+                //dbg.PrintHierarchy(FlightGlobals.ActiveVessel);
                 //dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"));
                 //dbg.PrintHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom);
-                dbg.PrintHierarchy(GameObject.Find("speedText"));
-                dbg.Out("---------------------------------------------------------", 0);
+                //dbg.PrintHierarchy(GameObject.Find("speedText"));
+                //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintHierarchy(GameObject.Find("KFI-AREA-left"));
                 //dbg.PrintHierarchy(GameObject.Find("KFI-AREA-right"));
                 //dbg.Out("---------------------------------------------------------", 0);
-                dbg.PrintHierarchy(GameObject.Find("UI camera"));
-                dbg.Out("---------------------------------------------------------", 0);
+                //dbg.PrintHierarchy(GameObject.Find("UI camera"));
+                //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintHierarchy(GameObject.Find("maneuverVector"));
                 //int indent;
                 //dbg.PrintGameObjectHierarchUp(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, out indent);
                 //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, indent);
                 //dbg.Out("---------------------------------------------------------", 0);
-                dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
-                dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
+                //dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
+                //dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
                 dbg.Out("---------------------------------------------------------", 0);
                 dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
                 dbg.Out("---------------------------------------------------------", 0);
