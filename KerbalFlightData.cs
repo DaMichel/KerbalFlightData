@@ -80,6 +80,12 @@ namespace KerbalFlightData
         public void PrintGameObjectHierarchy(GameObject o, int indent)
         {
             Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3"), indent);
+            //Out("[", indent);
+            foreach (var comp in o.GetComponents<Component>())
+            {
+                Out("<"+comp.GetType().Name+" "+comp.name+">", indent);
+            }
+            //Out("]", indent);
             foreach (Transform t in o.transform)
             {
                 PrintGameObjectHierarchy(t.gameObject, indent + 2);
@@ -161,12 +167,12 @@ namespace KerbalFlightData
 
         public static void Log(string s)
         {
-            Debug.Log("DMFlightData: " + s);
+            Debug.Log("KerbalFlightData: " + s);
         }
         
         public static void LogWarning(string s)
         {
-            Debug.LogWarning("DMFlightData: " + s);
+            Debug.LogWarning("KerbalFlightData: " + s);
         }
     }
 
@@ -245,7 +251,7 @@ namespace KerbalFlightData
     class DataFAR : DataSource
     {
         private Type FARControlSys = null;
-        private bool farDataIsObtainedOkay = true;
+        private bool farDataIsObtainedOkay = false;
         private FieldInfo fieldControlSys; // of FARControlSys
         private FieldInfo fieldQ, fieldMach, fieldAir, fieldStall;
 
@@ -267,37 +273,47 @@ namespace KerbalFlightData
             }
         }
 
-        void GetFARData(Data data)
+        bool GetFARData(Data data)
         {
             var instance = fieldControlSys.GetValue(null);
-            data.q = (double)fieldQ.GetValue(instance);
-            data.machNumber = (double)fieldMach.GetValue(instance);
-            data.airAvailability = (double)fieldAir.GetValue(null);
-            data.stallPercentage = (double)fieldStall.GetValue(null);
-            data.hasAerodynamics = true;
-            data.hasAirAvailability = true;
+            if (instance == null)  // maybe there is currently no active control system. That's okay ...
+            {
+                data.hasAerodynamics = false;
+                data.hasAirAvailability = false;
+                return false;
+            }
+            else
+            {
+                // any error here though, is a real error. It would probably mean that the assumptions about FARControlSys were invalidated by version updates.
+                data.q = (double)fieldQ.GetValue(instance);
+                data.machNumber = (double)fieldMach.GetValue(instance);
+                data.airAvailability = (double)fieldAir.GetValue(null);
+                data.stallPercentage = (double)fieldStall.GetValue(null);
+                data.hasAerodynamics = true;
+                data.hasAirAvailability = true;
+            }
+            return true;
         }
 
         public override void Update(Data data, Vessel vessel)
         {
-            try
+            bool ok = GetFARData(data);
+            if (ok)
             {
-                GetFARData(data);
                 if (!farDataIsObtainedOkay)
-                    DMDebug.Log("Data from FAR obtained successfully");
-                farDataIsObtainedOkay = true;
-            }
-            catch (Exception e)
-            {
-                if (farDataIsObtainedOkay) // if it was obtained okay the last time
                 {
-                    DMDebug.Log(e.ToString());
+                    DMDebug.Log("Data from FAR obtained successfully");
+                    farDataIsObtainedOkay = true;
+                }
+            }
+            else
+            {
+                if (farDataIsObtainedOkay)
+                {
+                    DMDebug.Log("Failed to get data from FAR although it was obtained successfully before");
                     farDataIsObtainedOkay = false;
                 }
-                // otherwise remain silent!
-                // ... but set error flags
-                data.hasAerodynamics = false;
-                data.hasAirAvailability = false;
+                
             }
         }
     };
@@ -876,9 +892,9 @@ namespace KerbalFlightData
             uiScalingFactor = 0.6f / camera.orthographicSize; // 0.6 = orthographicSize for "normal" UI scale setting
             uiScalingFactor *= ((float)Screen.height)/Screen.width*1920f/1080f;
             uiScalingFactor *= anchorScale; // scale font with navball
-            DMDebug.Log2("uiScalingFactor = " + uiScalingFactor + "\n" +
-                         "1/aspect = " + (((float)Screen.height) / Screen.width) + "\n" +
-                         "orthoSize = " + camera.orthographicSize);
+            //DMDebug.Log2("uiScalingFactor = " + uiScalingFactor + "\n" +
+            //             "1/aspect = " + (((float)Screen.height) / Screen.width) + "\n" +
+            //             "orthoSize = " + camera.orthographicSize);
             fontSize = Mathf.RoundToInt(baselineFontSize * uiScalingFactor);
 
             bool isIVA = CameraManager.Instance.currentCameraMode == CameraManager.CameraMode.IVA;
@@ -1282,10 +1298,14 @@ namespace KerbalFlightData
             if (Input.GetKeyDown(KeyCode.O))
             {
                 DMDebug dbg = new DMDebug();
-                InternalSpeed spd = InternalSpeed.FindObjectsOfType<InternalSpeed>().FirstOrDefault();
-                dbg.Out(spd.textObject.text.text, 0);
+
                 dbg.Out("---------------------------------------------------------", 0);
-                dbg.PrintHierarchy(spd);
+                dbg.PrintGameObjectHierarchy(InternalSpace.Instance.gameObject, 0);
+                dbg.Out("---------------------------------------------------------", 0);
+                //InternalSpeed spd = InternalSpeed.FindObjectsOfType<InternalSpeed>().FirstOrDefault();
+                //dbg.Out(spd.textObject.text.text, 0);
+                //dbg.Out("---------------------------------------------------------", 0);
+                //dbg.PrintHierarchy(spd);
                 //dbg.PrintHierarchy(InternalCamera.Instance);
                 //dbg.PrintHierarchy(FlightGlobals.ActiveVessel);
                 //dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"));
@@ -1304,9 +1324,9 @@ namespace KerbalFlightData
                 //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
                 //dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
-                dbg.Out("---------------------------------------------------------", 0);
-                dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
-                dbg.Out("---------------------------------------------------------", 0);
+                //dbg.Out("---------------------------------------------------------", 0);
+                //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
+                //dbg.Out("---------------------------------------------------------", 0);
                 var fonts = FindObjectsOfType(typeof(Font)) as Font[];
                 foreach (Font font in fonts)
                     dbg.Out(font.name, 1);
