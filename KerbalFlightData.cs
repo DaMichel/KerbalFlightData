@@ -808,7 +808,9 @@ namespace KerbalFlightData
         const float navballWidth = 0.072f;
         const float navballGaugeWidth = 0.030f;
         const float navballGaugeWidthNonscaling = 0.030f;
-        const int baselineFontSize = 16; // font size @ "normal" UI scale setting
+        //const float baselineFontSize = 16; 
+        float baseFontSizeIVA = 16; // font size @ "normal" UI scale setting
+        float baseFontSizeExternal = 16;
 
         public Camera camera = null;
         public int   fontSize;
@@ -820,6 +822,18 @@ namespace KerbalFlightData
 
         public GUIStyle prototypeStyle;
         public GUIStyle[] styles = { null, null, null, null, null };
+
+        public void LoadSettings(ConfigNode settings)
+        {
+            if (settings.HasValue("baseFontSizeIVA")) baseFontSizeIVA  = float.Parse(settings.GetValue("baseFontSizeIVA"));
+            if (settings.HasValue("baseFontSizeExternal")) baseFontSizeExternal  = float.Parse(settings.GetValue("baseFontSizeExternal"));
+        }
+
+        public void SaveSettings(ConfigNode settings)
+        {
+            settings.AddValue("baseFontSizeIVA", baseFontSizeIVA);
+            settings.AddValue("baseFontSizeExternal", baseFontSizeExternal);
+        }
 
         public void Init()
         {
@@ -846,7 +860,7 @@ namespace KerbalFlightData
             s.SetColor(Color.white);
             s.padding = new RectOffset(0, 0, 0, 1);
             s.margin = new RectOffset(0, 0, 0, 0);
-            s.fontSize = Mathf.RoundToInt(baselineFontSize * uiScalingFactor);
+            s.fontSize = Mathf.RoundToInt(baseFontSizeExternal * uiScalingFactor);
             s.wordWrap = false;
 
             styles[MyStyleId.Plain] = s;
@@ -895,10 +909,8 @@ namespace KerbalFlightData
             //DMDebug.Log2("uiScalingFactor = " + uiScalingFactor + "\n" +
             //             "1/aspect = " + (((float)Screen.height) / Screen.width) + "\n" +
             //             "orthoSize = " + camera.orthographicSize);
-            fontSize = Mathf.RoundToInt(baselineFontSize * uiScalingFactor);
-
+            
             bool isIVA = CameraManager.Instance.currentCameraMode == CameraManager.CameraMode.IVA;
-
             if (isIVA)
             {
                 Vector3 p = camera.WorldToViewportPoint(ScreenSafeUI.fetch.centerAnchor.top.transform.position);
@@ -907,6 +919,7 @@ namespace KerbalFlightData
                 screenAnchorLeft   = p.x - offset;
                 screenAnchorRight  = p.x + offset;
                 anchorTop = true;
+                fontSize = Mathf.RoundToInt(baseFontSizeIVA * uiScalingFactor);
             }
             else
             {
@@ -920,6 +933,7 @@ namespace KerbalFlightData
                 screenAnchorLeft   = p.x - navballWidth * uiScalingFactor;
                 screenAnchorVertical = p.y;
                 anchorTop = false;
+                fontSize = Mathf.RoundToInt(baseFontSizeExternal * uiScalingFactor);
             }
             
         }
@@ -1116,6 +1130,7 @@ namespace KerbalFlightData
             ConfigNode settings = new ConfigNode();
             settings.name = "SETTINGS";
             settings.AddValue("active", displayUIByToolbarClick);
+            GuiInfo.instance.SaveSettings(settings);
             settings.Save(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
         }
 
@@ -1128,6 +1143,7 @@ namespace KerbalFlightData
             if (settings != null)
             {
                 if (settings.HasValue("active")) displayUIByToolbarClick = bool.Parse(settings.GetValue("active"));
+                GuiInfo.instance.LoadSettings(settings);
             }
         }
 
