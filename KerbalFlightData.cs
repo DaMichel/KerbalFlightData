@@ -536,9 +536,9 @@ namespace KerbalFlightData
     };
 
 
-    public struct KFIContent
+    public struct KFDContent
     {
-        public KFIContent(string text_, int styleId_)
+        public KFDContent(string text_, int styleId_)
         {
             this.text = text_;
             this.styleId = styleId_;
@@ -550,7 +550,7 @@ namespace KerbalFlightData
 
     /* this scripts manages a piece of text. It allocates the main text plus some clones for shadowing. 
      * The clones get a dark color and are drawn behind the main text with a slight offset */
-    public class KFIText : MonoBehaviour
+    public class KFDText : MonoBehaviour
     {
         // GUITexts are positioned in viewport space [0,1]^2
         GUIText    gt1_; 
@@ -559,21 +559,21 @@ namespace KerbalFlightData
         int        styleId_ = -1;
         Rect       screenRect_;
         int change_ = 0, last_change_checked_ = -1; // with this i check if the screen space rect must be recomputed
-        Func<Data, KFIContent> getContent_;
+        Func<Data, KFDContent> getContent_;
         Func<Data, bool> hasChanged_;
 
-        public static KFIText Create(string id, int styleId, Func<Data, KFIContent> getContent, Func<Data, bool> hasChanged)
+        public static KFDText Create(string id, int styleId, Func<Data, KFDContent> getContent, Func<Data, bool> hasChanged)
         {
-            GameObject textGO = new GameObject("KFI-" + id);
+            GameObject textGO = new GameObject("KFD-" + id);
             textGO.layer = 12; // navball layer
 
-            KFIText kfi = textGO.AddComponent<KFIText>();
+            KFDText kfi = textGO.AddComponent<KFDText>();
             
             kfi.gt1_ = textGO.AddComponent<GUIText>();
             kfi.gt1_.anchor = TextAnchor.LowerLeft;
             kfi.gt1_.alignment = TextAlignment.Left;
 
-            GameObject shadowGO = new GameObject("KFI-SH-" + id);            
+            GameObject shadowGO = new GameObject("KFD-SH-" + id);            
             shadowGO.layer = 12;
             shadowGO.transform.parent = textGO.transform;
             shadowGO.transform.localPosition = Vector3.zero;
@@ -582,7 +582,7 @@ namespace KerbalFlightData
             kfi.gt2_.anchor = TextAnchor.LowerLeft;
             kfi.gt2_.alignment = TextAlignment.Left;
 
-            shadowGO = new GameObject("KFI-SH2-" + id);
+            shadowGO = new GameObject("KFD-SH2-" + id);
             shadowGO.layer = 12;
             shadowGO.transform.parent = textGO.transform;
             shadowGO.transform.localPosition = Vector3.zero;
@@ -603,7 +603,7 @@ namespace KerbalFlightData
             if (hasChanged_(data))
             {
                 DMDebug.Log2(name + " has changed");
-                KFIContent c = getContent_(data);
+                KFDContent c = getContent_(data);
 
                 if (this.styleId_ != c.styleId)  // careful because of potentially costly update
                 {
@@ -713,22 +713,22 @@ namespace KerbalFlightData
     /* This class represents the left/right text areas. Texts are managed as children (by Unity GameObjects).
      * The point is to have the area auto-expand the contain one text per row in the vertical and 
      * to auto-expand in width and to align the text */
-    public class KFIArea : MonoBehaviour
+    public class KFDArea : MonoBehaviour
     {
         public TextAlignment alignment;
         public VerticalAlignment verticalAlignment = VerticalAlignment.Bottom;
-        public List<KFIText> items;
+        public List<KFDText> items;
         float maximalWidth = 0f;
 
         /* note: alignment is actually the alignment of the area. e.g. right-alignment means that the anchor point
          * is at the right bottom(!) corner. The text inside is always left-aligned*/
-        public static KFIArea Create(string id, Vector2 position_, TextAlignment alignment_, Transform parent) // factory, creates game object with attached FKIArea
+        public static KFDArea Create(string id, Vector2 position_, TextAlignment alignment_, Transform parent) // factory, creates game object with attached FKIArea
         {
-            GameObject go = new GameObject("KFI-AREA-"+id);
-            KFIArea kfi = go.AddComponent<KFIArea>();
+            GameObject go = new GameObject("KFD-AREA-"+id);
+            KFDArea kfi = go.AddComponent<KFDArea>();
             kfi.alignment = alignment_;
             kfi.useGUILayout = false;
-            kfi.items = new List<KFIText>();
+            kfi.items = new List<KFDText>();
             go.transform.parent = parent;
             go.transform.localPosition = position_;
             return kfi;
@@ -738,7 +738,7 @@ namespace KerbalFlightData
         {
             //DMDebug.Log2(this.name + " LateUpdate");
             float w = maximalWidth, h = 0;
-            foreach (KFIText t in items)
+            foreach (KFDText t in items)
             {
                 if (!t || !t.enableGameObject) continue;
                 Rect r = t.screenRect;
@@ -749,7 +749,7 @@ namespace KerbalFlightData
             if (alignment == TextAlignment.Right) p.x -= w;
             if (verticalAlignment == VerticalAlignment.Bottom)
                 p.y += h;
-            foreach (KFIText t in items)
+            foreach (KFDText t in items)
             {
                 if (!t || !t.enableGameObject) continue;
                 p.y -= t.screenRect.height;
@@ -769,7 +769,7 @@ namespace KerbalFlightData
             items.Clear();
         }
 
-        public void Add(KFIText t)
+        public void Add(KFDText t)
         {
             t.gameObject.transform.parent = this.gameObject.transform;
             t.localPosition = Vector3.zero;
@@ -1051,10 +1051,10 @@ namespace KerbalFlightData
         static Toolbar.IButton toolbarButton;
 
         // gui stuff
-        KFIText[] texts = null;
+        KFDText[] texts = null;
         int[] markers = null;
         int markerMaster = 0;
-        KFIArea leftArea, rightArea;
+        KFDArea leftArea, rightArea;
         static class TxtIdx
         {
             public const int MACH = 0, ALT = 1, AIR = 2, STALL = 3, Q = 4, TEMP = 5, TNODE = 6, AP = 7, PE = 8;
@@ -1328,8 +1328,8 @@ namespace KerbalFlightData
                 //dbg.PrintHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom);
                 //dbg.PrintHierarchy(GameObject.Find("speedText"));
                 //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintHierarchy(GameObject.Find("KFI-AREA-left"));
-                //dbg.PrintHierarchy(GameObject.Find("KFI-AREA-right"));
+                //dbg.PrintHierarchy(GameObject.Find("KFD-AREA-left"));
+                //dbg.PrintHierarchy(GameObject.Find("KFD-AREA-right"));
                 //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintHierarchy(GameObject.Find("UI camera"));
                 //dbg.Out("---------------------------------------------------------", 0);
@@ -1374,44 +1374,44 @@ namespace KerbalFlightData
             DMDebug.Log2("SetupGUI");
             GuiInfo.instance.Init();
 
-            leftArea = KFIArea.Create("left", new Vector2(GuiInfo.instance.screenAnchorLeft, 0f), TextAlignment.Right, null);
-            rightArea = KFIArea.Create("right", new Vector2(GuiInfo.instance.screenAnchorRight, 0f), TextAlignment.Left, null);
-            texts = new KFIText[9];
+            leftArea = KFDArea.Create("left", new Vector2(GuiInfo.instance.screenAnchorLeft, 0f), TextAlignment.Right, null);
+            rightArea = KFDArea.Create("right", new Vector2(GuiInfo.instance.screenAnchorRight, 0f), TextAlignment.Left, null);
+            texts = new KFDText[9];
 
             double tmpMach = -1;
-            texts[TxtIdx.MACH] = KFIText.Create("mach", MyStyleId.Emph,
-                (Data d) => new KFIContent("Mach " + d.machNumber.ToString("F2"), MyStyleId.Emph),
+            texts[TxtIdx.MACH] = KFDText.Create("mach", MyStyleId.Emph,
+                (Data d) => new KFDContent("Mach " + d.machNumber.ToString("F2"), MyStyleId.Emph),
                 (Data d) => SetIf(ref tmpMach, d.machNumber, !Util.AlmostEqual(d.machNumber, tmpMach, 0.01)));
 
             double tmpAir = -1;
-            texts[TxtIdx.AIR] = KFIText.Create("air", MyStyleId.Greyed,
-                (Data d) => new KFIContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
+            texts[TxtIdx.AIR] = KFDText.Create("air", MyStyleId.Greyed,
+                (Data d) => new KFDContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
                 (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
 
             int tmpStall = -1;
-            texts[TxtIdx.STALL] = KFIText.Create("stall", MyStyleId.Greyed,
-                (Data d) => new KFIContent("Stall", d.warnStall),
+            texts[TxtIdx.STALL] = KFDText.Create("stall", MyStyleId.Greyed,
+                (Data d) => new KFDContent("Stall", d.warnStall),
                 (Data d) => SetIf(ref tmpStall, d.warnStall, d.warnStall != tmpStall));
 
             double tmpQ = -1;
-            texts[TxtIdx.Q] = KFIText.Create("q", MyStyleId.Greyed,
-                (Data d) => new KFIContent("Q  " + GuiInfo.FormatPressure(d.q), d.warnQ),
+            texts[TxtIdx.Q] = KFDText.Create("q", MyStyleId.Greyed,
+                (Data d) => new KFDContent("Q  " + GuiInfo.FormatPressure(d.q), d.warnQ),
                 (Data d) => SetIf(ref tmpQ, d.q, !Util.AlmostEqualRel(d.q, tmpQ, 0.01)));
 
             double tmpTemp = -1;
             int    tmpWarnTemp = -1;
-            texts[TxtIdx.TEMP] = KFIText.Create("temp", MyStyleId.Greyed,
-                (Data d) => new KFIContent("T " + d.highestTemp.ToString("F0") + " °C", d.warnTemp),
+            texts[TxtIdx.TEMP] = KFDText.Create("temp", MyStyleId.Greyed,
+                (Data d) => new KFDContent("T " + d.highestTemp.ToString("F0") + " °C", d.warnTemp),
                 (Data d) => SetIf(ref tmpTemp, ref tmpWarnTemp, d.highestTemp, d.warnTemp, !Util.AlmostEqual(d.highestTemp, tmpTemp, 1) || d.warnTemp != tmpWarnTemp));
 
 
             double tmpAlt = -1;
-            texts[TxtIdx.ALT] = KFIText.Create("alt", MyStyleId.Emph,
-                (Data d) => new KFIContent("Alt " + (d.radarAltitude < 5000 ? (GuiInfo.FormatRadarAltitude(d.radarAltitude) + " R") : GuiInfo.FormatAltitude(d.altitude)), d.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph),
+            texts[TxtIdx.ALT] = KFDText.Create("alt", MyStyleId.Emph,
+                (Data d) => new KFDContent("Alt " + (d.radarAltitude < 5000 ? (GuiInfo.FormatRadarAltitude(d.radarAltitude) + " R") : GuiInfo.FormatAltitude(d.altitude)), d.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph),
                 (Data d) => SetIf(ref tmpAlt, d.altitude, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001)));
 
 
-            Func<Data, KFIContent> fmtTime = (Data d) =>
+            Func<Data, KFDContent> fmtTime = (Data d) =>
             {
                 String timeLabel = "";
                 switch (d.nextNode)
@@ -1423,24 +1423,24 @@ namespace KerbalFlightData
                     case Data.NextNode.Escape: timeLabel = "Esc"; break;
                 }
                 timeLabel = "T" + timeLabel + " -" + GuiInfo.FormatTime(d.timeToNode);
-                return new KFIContent(timeLabel, MyStyleId.Plain);
+                return new KFDContent(timeLabel, MyStyleId.Plain);
             };
 
             double tmpTNode = -1;
-            texts[TxtIdx.TNODE] = KFIText.Create("tnode", MyStyleId.Plain,
+            texts[TxtIdx.TNODE] = KFDText.Create("tnode", MyStyleId.Plain,
                 fmtTime,
                 (Data d) => SetIf(ref tmpTNode, d.timeToNode, !Util.AlmostEqual(d.timeToNode, tmpTNode, 1)));
 
             Data.NextNode tmpNextNode1 = Data.NextNode.Maneuver;
             double tmpAp = -1;
-            texts[TxtIdx.AP] = KFIText.Create("ap", MyStyleId.Plain,
-                (Data d) => new KFIContent("Ap " + GuiInfo.FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain),
+            texts[TxtIdx.AP] = KFDText.Create("ap", MyStyleId.Plain,
+                (Data d) => new KFDContent("Ap " + GuiInfo.FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain),
                 (Data d) => SetIf(ref tmpAp, ref tmpNextNode1, d.apoapsis, d.nextNode, !Util.AlmostEqualRel(d.apoapsis, tmpAp, 0.001) || d.nextNode != tmpNextNode1));
 
             Data.NextNode tmpNextNode2 = Data.NextNode.Maneuver;
             double tmpPe = 0;
-            texts[TxtIdx.PE] = KFIText.Create("pe", MyStyleId.Plain,
-                (Data d) => new KFIContent("Pe " + GuiInfo.FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
+            texts[TxtIdx.PE] = KFDText.Create("pe", MyStyleId.Plain,
+                (Data d) => new KFDContent("Pe " + GuiInfo.FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
                 (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.001) || d.nextNode != tmpNextNode2));
 
             leftArea.Add(texts[TxtIdx.ALT]);
