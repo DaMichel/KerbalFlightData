@@ -564,6 +564,7 @@ namespace KerbalFlightData
 
         public static KFDText Create(string id, int styleId, Func<Data, KFDContent> getContent, Func<Data, bool> hasChanged)
         {
+            // foreground text
             GameObject textGO = new GameObject("KFD-" + id);
             textGO.layer = 12; // navball layer
 
@@ -573,19 +574,21 @@ namespace KerbalFlightData
             kfi.gt1_.anchor = TextAnchor.LowerLeft;
             kfi.gt1_.alignment = TextAlignment.Left;
 
+            // background shadow 1
             GameObject shadowGO = new GameObject("KFD-SH-" + id);            
             shadowGO.layer = 12;
             shadowGO.transform.parent = textGO.transform;
-            shadowGO.transform.localPosition = Vector3.zero;
+            shadowGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
 
             kfi.gt2_ = shadowGO.AddComponent<GUIText>();
             kfi.gt2_.anchor = TextAnchor.LowerLeft;
             kfi.gt2_.alignment = TextAlignment.Left;
 
+            // background shadow 2
             shadowGO = new GameObject("KFD-SH2-" + id);
             shadowGO.layer = 12;
             shadowGO.transform.parent = textGO.transform;
-            shadowGO.transform.localPosition = Vector3.zero;
+            shadowGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
 
             kfi.gt3_ = shadowGO.AddComponent<GUIText>();
             kfi.gt3_.anchor = TextAnchor.LowerLeft;
