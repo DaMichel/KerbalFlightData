@@ -1051,7 +1051,7 @@ namespace KerbalFlightData
         Data data;
         List<DataSource> dataSources = new List<DataSource>();
 
-        static Toolbar.IButton toolbarButton;
+        static IButton toolbarButton;
 
         // gui stuff
         KFDText[] texts = null;
@@ -1096,16 +1096,19 @@ namespace KerbalFlightData
 
             data = new Data();
 
-            toolbarButton = Toolbar.ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
-            toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
-            toolbarButton.ToolTip = "KerbalFlightData On/Off Switch";
-            toolbarButton.Visibility = new Toolbar.GameScenesVisibility(GameScenes.FLIGHT);
-            toolbarButton.Enabled = true;
-            toolbarButton.OnClick += (e) =>
+            if (ToolbarManager.ToolbarAvailable)
             {
-                displayUIByToolbarClick = !displayUIByToolbarClick;
-                enabled = displayUIByToolbarClick && displayUIByGuiEvent;
-            };
+                toolbarButton = ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
+                toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
+                toolbarButton.ToolTip = "KerbalFlightData On/Off Switch";
+                toolbarButton.Visibility = new GameScenesVisibility(GameScenes.FLIGHT);
+                toolbarButton.Enabled = true;
+                toolbarButton.OnClick += (e) =>
+                {
+                    displayUIByToolbarClick = !displayUIByToolbarClick;
+                    enabled = displayUIByToolbarClick && displayUIByGuiEvent;
+                };
+            }
 
             GameEvents.onHideUI.Add(OnHideUI);
             GameEvents.onShowUI.Add(OnShowUI);
@@ -1188,6 +1191,9 @@ namespace KerbalFlightData
             // unregister, or else errors occur
             GameEvents.onHideUI.Remove(OnHideUI);
             GameEvents.onShowUI.Remove(OnShowUI);
+
+            if (toolbarButton != null)
+                toolbarButton.Destroy();
         }
 
 
