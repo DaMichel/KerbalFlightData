@@ -238,6 +238,7 @@ namespace KerbalFlightData
 
         public double highestTemp = 0;
         public double highestRelativeTemp = 0;
+        public double smallestTempDifferenceFromCritical = 0;
         public bool hasTemp = false;
     };
 
@@ -425,9 +426,11 @@ namespace KerbalFlightData
             }
             if (data.hasTemp)
             {
-                if (data.highestRelativeTemp > 0.95)
+                //if (data.highestRelativeTemp > 0.95)
+                if (data.smallestTempDifferenceFromCritical < 50)
                     data.warnTemp = MyStyleId.Warn2;
-                else if (data.highestRelativeTemp > 0.8)
+                else if (data.smallestTempDifferenceFromCritical < 200)
+                //else if (data.highestRelativeTemp > 0.80)
                     data.warnTemp = MyStyleId.Warn1;
                 else
                     data.warnTemp = MyStyleId.Greyed;
@@ -511,12 +514,27 @@ namespace KerbalFlightData
 
             data.highestTemp = double.NegativeInfinity;
             data.highestRelativeTemp = double.NegativeInfinity;
+            data.smallestTempDifferenceFromCritical = double.PositiveInfinity;
             foreach (Part p in vessel.parts)
             {
                 if (p.temperature != 0f) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
                 {
-                    data.highestTemp = Math.Max(p.temperature, data.highestTemp);
-                    data.highestRelativeTemp = Math.Max(p.temperature / p.maxTemp, data.highestRelativeTemp);
+                    float dreTempThreshold = p.maxTemp;
+                    bool is_engine = (p.Modules.Contains("ModuleEngines") || p.Modules.Contains("ModuleEnginesFX"));
+                    if (is_engine)
+                        dreTempThreshold *= 0.975f;
+                    else
+                        dreTempThreshold *= 0.85f;
+                    //if (p.temperature > data.highestRelativeTemp * dreTempThreshold)
+                    //{
+                    //    data.highestTemp = p.temperature;
+                    //    data.highestRelativeTemp = p.temperature / dreTempThreshold;
+                    //}
+                    if (dreTempThreshold - p.temperature < data.smallestTempDifferenceFromCritical)
+                    {
+                        data.smallestTempDifferenceFromCritical = dreTempThreshold - p.temperature;
+                        data.highestTemp = p.temperature;
+                    }
                 }
             }
         }
