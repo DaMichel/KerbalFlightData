@@ -255,6 +255,7 @@ namespace KerbalFlightData
         private bool farDataIsObtainedOkay = false;
         private FieldInfo fieldControlSys; // of FARControlSys
         private FieldInfo fieldQ, fieldMach, fieldAir, fieldStall;
+        public bool obtainIntakeData = true;
 
         public DataFAR(Type FARControlSys_)
             : base()
@@ -288,10 +289,10 @@ namespace KerbalFlightData
                 // any error here though, is a real error. It would probably mean that the assumptions about FARControlSys were invalidated by version updates.
                 data.q = (double)fieldQ.GetValue(instance);
                 data.machNumber = (double)fieldMach.GetValue(instance);
-                data.airAvailability = (double)fieldAir.GetValue(null);
+                data.airAvailability = obtainIntakeData ? (double)fieldAir.GetValue(null) : 1.0;
                 data.stallPercentage = (double)fieldStall.GetValue(null);
                 data.hasAerodynamics = true;
-                data.hasAirAvailability = true;
+                data.hasAirAvailability = obtainIntakeData;
             }
             return true;
         }
@@ -525,12 +526,7 @@ namespace KerbalFlightData
                         dreTempThreshold *= 0.975f;
                     else
                         dreTempThreshold *= 0.85f;
-                    //if (p.temperature > data.highestRelativeTemp * dreTempThreshold)
-                    //{
-                    //    data.highestTemp = p.temperature;
-                    //    data.highestRelativeTemp = p.temperature / dreTempThreshold;
-                    //}
-                    if (dreTempThreshold - p.temperature < data.smallestTempDifferenceFromCritical)
+                     if (dreTempThreshold - p.temperature < data.smallestTempDifferenceFromCritical)
                     {
                         data.smallestTempDifferenceFromCritical = dreTempThreshold - p.temperature;
                         data.highestTemp = p.temperature;
@@ -623,7 +619,7 @@ namespace KerbalFlightData
         {
             if (hasChanged_(data))
             {
-                DMDebug.Log2(name + " has changed");
+                //DMDebug.Log2(name + " has changed");
                 KFDContent c = getContent_(data);
 
                 if (this.styleId_ != c.styleId)  // careful because of potentially costly update
@@ -1085,7 +1081,8 @@ namespace KerbalFlightData
         {
             DMDebug.Log2(name + " Awake!");
             dataSources.Clear();
-            bool hasFar = false;
+            DataFAR farData = null;
+            bool hasAJE = false;
             foreach (var assembly in AssemblyLoader.loadedAssemblies)
             {
                 //DMDebug.Log2(assembly.name);
@@ -1097,18 +1094,26 @@ namespace KerbalFlightData
                         //DMDebug.Log2(t.FullName);
                         if (t.FullName.Equals("ferram4.FARControlSys"))
                         {
-                            dataSources.Add(new DataFAR(t));
-                            hasFar = true;
+                            farData = new DataFAR(t);
                         }
                     }
                 }
-                if (assembly.name == "DeadlyReentry")
+                else if (assembly.name == "DeadlyReentry")
                 {
                     dataSources.Add(new DataTemperature());
                 }
+                else if (assembly.name == "AJE")
+                {
+                    hasAJE = true;
+                }
             }
-            if (hasFar == false)
+            if (farData == null)
                 dataSources.Add(new DataIntakeAirStock());
+            else
+            {
+                farData.obtainIntakeData = hasAJE == false;
+                dataSources.Add(farData);
+            }
             dataSources.Add(new DataOrbitAndAltitude());
             dataSources.Add(new DataSetupWarnings());
 
@@ -1124,7 +1129,7 @@ namespace KerbalFlightData
                 toolbarButton.OnClick += (e) =>
                 {
                     displayUIByToolbarClick = !displayUIByToolbarClick;
-                    enabled = displayUIByToolbarClick && displayUIByGuiEvent;
+                    UpdateEnabling();
                 };
             }
 
@@ -1132,19 +1137,26 @@ namespace KerbalFlightData
             GameEvents.onShowUI.Add(OnShowUI);
 
             LoadSettings();
+            UpdateEnabling(); // might start with it disabled
         }
 
 
         void OnHideUI()
         {
             displayUIByGuiEvent = false;
-            enabled = displayUIByToolbarClick && displayUIByGuiEvent;
+            UpdateEnabling();
         }
 
 
         void OnShowUI()
         {
             displayUIByGuiEvent = true;
+            UpdateEnabling();
+        }
+
+
+        void UpdateEnabling()
+        {
             enabled = displayUIByToolbarClick && displayUIByGuiEvent;
         }
 
@@ -1162,8 +1174,7 @@ namespace KerbalFlightData
         void LoadSettings()
         {
             ConfigNode settings = new ConfigNode();
-            settings = ConfigNode.Load(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + @"\settings.cfg".Replace('/', '\\'));
-
+            settings = ConfigNode.Load(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
             if (settings != null)
             {
                 if (settings.HasValue("active")) displayUIByToolbarClick = bool.Parse(settings.GetValue("active"));
