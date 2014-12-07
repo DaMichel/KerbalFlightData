@@ -214,6 +214,8 @@ namespace KerbalFlightData
         public double q;
         public bool hasAirAvailability = false;
         public bool hasAerodynamics = false; // mach, stall, q
+        public bool hasEnginePerf = false;
+        public double totalThrust;
 
         public int warnQ;
         public int warnStall;
@@ -243,9 +245,14 @@ namespace KerbalFlightData
     };
 
 
+    public delegate void VisitPartModule(Data data, Vessel vessel, Part part, PartModule module);
+    public delegate void VisitPart(Data data, Vessel vessel, Part part);
+
+
     abstract class DataSource
     {
-        public abstract void Update(Data data, Vessel vessel);
+        public abstract void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart);
+        public abstract void UpdatePostVisitation(Data data, Vessel vessel);
     };
 
 
@@ -297,7 +304,7 @@ namespace KerbalFlightData
             return true;
         }
 
-        public override void Update(Data data, Vessel vessel)
+        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
         {
             bool ok = GetFARData(data);
             if (ok)
@@ -318,81 +325,122 @@ namespace KerbalFlightData
                 
             }
         }
+
+        public override void UpdatePostVisitation(Data data, Vessel vessel)
+        {
+        }
     };
 
 
     class DataIntakeAirStock : DataSource
     {
-        public override void Update(Data data, Vessel vessel)
+        private double airDemand;
+        private double airAvailable;
+        PartResourceLibrary l = PartResourceLibrary.Instance;
+
+        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
         {
             data.hasAirAvailability = data.isInAtmosphere;
             if (!data.hasAirAvailability) return;
 
-            double airDemand = 0;
-            double airAvailable = 0;
+            airAvailable = 0;
+            airDemand    = 0;
 
+            callbacksModule += VisitPartModule;
+        }
+
+        public override void UpdatePostVisitation(Data data, Vessel vessel)
+        {
+            data.airAvailability = airAvailable / airDemand;
+        }
+
+        void VisitPartModule(Data data, Vessel vessel, Part part, PartModule m)
+        {
             double fixedDeltaTime = TimeWarp.fixedDeltaTime;
-            PartResourceLibrary l = PartResourceLibrary.Instance;
-            foreach (Part p in vessel.parts)
+            if (m is ModuleEngines)
             {
-                if (p == null)
-                    continue;
-                foreach (PartModule m in p.Modules)
+                ModuleEngines e = m as ModuleEngines;
+                if (e.EngineIgnited && !e.engineShutdown)
                 {
-                    if (m is ModuleEngines)
+                    foreach (Propellant v in e.propellants)
                     {
-                        ModuleEngines e = m as ModuleEngines;
-                        if (e.EngineIgnited && !e.engineShutdown)
+                        string propName = v.name;
+                        PartResourceDefinition r = l.resourceDefinitions[propName];
+                        if (propName == "IntakeAir")
                         {
-                            foreach (Propellant v in e.propellants)
-                            {
-                                string propName = v.name;
-                                PartResourceDefinition r = l.resourceDefinitions[propName];
-                                if (propName == "IntakeAir")
-                                {
-                                    airDemand += v.currentRequirement;
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    else if (m is ModuleEnginesFX)
-                    {
-                        ModuleEnginesFX e = m as ModuleEnginesFX;
-                        if (e.EngineIgnited && !e.engineShutdown)
-                        {
-                            foreach (Propellant v in e.propellants)
-                            {
-                                string propName = v.name;
-                                PartResourceDefinition r = l.resourceDefinitions[propName];
-                                if (propName == "IntakeAir")
-                                {
-                                    airDemand += v.currentRequirement;
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    else if (m is ModuleResourceIntake)
-                    {
-                        ModuleResourceIntake i = m as ModuleResourceIntake;
-                        if (i.intakeEnabled)
-                        {
-                            airAvailable += i.airFlow * fixedDeltaTime;
+                            airDemand += v.currentRequirement;
+                            continue;
                         }
                     }
                 }
             }
-            data.airAvailability = airAvailable / airDemand;
-            data.hasAirAvailability = true;
+            else if (m is ModuleEnginesFX)
+            {
+                ModuleEnginesFX e = m as ModuleEnginesFX;
+                if (e.EngineIgnited && !e.engineShutdown)
+                {
+                    foreach (Propellant v in e.propellants)
+                    {
+                        string propName = v.name;
+                        PartResourceDefinition r = l.resourceDefinitions[propName];
+                        if (propName == "IntakeAir")
+                        {
+                            airDemand += v.currentRequirement;
+                            continue;
+                        }
+                    }
+                }
+            }
+            else if (m is ModuleResourceIntake)
+            {
+                ModuleResourceIntake i = m as ModuleResourceIntake;
+                if (i.intakeEnabled)
+                {
+                    airAvailable += i.airFlow * fixedDeltaTime;
+                }
+            }
         }
     };
 
 
+    class DataEnginePerformance : DataSource
+    {
+        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
+        {
+            callbacksModule += VisitPartModule;
+            data.hasEnginePerf = true;
+            data.totalThrust = 0;
+        }
+
+        public override void UpdatePostVisitation(Data data, Vessel vessel)
+        {
+        }
+
+        void VisitPartModule(Data data, Vessel vessel, Part part, PartModule m)
+        {
+            if (m is ModuleEngines)
+            {
+                ModuleEngines e = m as ModuleEngines;
+                if (e.EngineIgnited && !e.engineShutdown)
+                {
+                    data.totalThrust += e.finalThrust;
+                }
+            }
+            else if (m is ModuleEnginesFX)
+            {
+                ModuleEnginesFX e = m as ModuleEnginesFX;
+                if (e.EngineIgnited && !e.engineShutdown)
+                {
+                    data.totalThrust += e.finalThrust;
+                }
+            }
+        }
+    };
+
 
     class DataSetupWarnings : DataSource
     {
-        public override void Update(Data data, Vessel vessel)
+        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
         {
             if (data.hasAerodynamics)
             {
@@ -437,13 +485,17 @@ namespace KerbalFlightData
                     data.warnTemp = MyStyleId.Greyed;
             }
         }
+
+        public override void UpdatePostVisitation(Data data, Vessel vessel)
+        {
+        }
     }
 
 
 
     class DataOrbitAndAltitude : DataSource
     {
-        public override void Update(Data data, Vessel vessel)
+        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
         {
             Orbit o = vessel.orbit;
             CelestialBody b = vessel.mainBody;
@@ -502,35 +554,46 @@ namespace KerbalFlightData
                     data.isLanded = true;
             }
         }
+
+        public override void UpdatePostVisitation(Data data, Vessel vessel)
+        {
+        }
     }
 
 
 
     class DataTemperature : DataSource
     {
-        public override void Update(Data data, Vessel vessel)
+        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
         {
             data.hasTemp = data.isInAtmosphere;
             if (!data.hasTemp) return;
 
+            callbacksPart += VisitPart;
+
             data.highestTemp = double.NegativeInfinity;
             data.highestRelativeTemp = double.NegativeInfinity;
             data.smallestTempDifferenceFromCritical = double.PositiveInfinity;
-            foreach (Part p in vessel.parts)
+        }
+
+        public override void UpdatePostVisitation(Data data, Vessel vessel)
+        {
+        }
+
+        void VisitPart(Data data, Vessel vessel, Part p)
+        {
+            if (p.temperature != 0f) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
             {
-                if (p.temperature != 0f) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
+                float dreTempThreshold = p.maxTemp;
+                bool is_engine = (p.Modules.Contains("ModuleEngines") || p.Modules.Contains("ModuleEnginesFX"));
+                if (is_engine)
+                    dreTempThreshold *= 0.975f;
+                else
+                    dreTempThreshold *= 0.85f;
+                    if (dreTempThreshold - p.temperature < data.smallestTempDifferenceFromCritical)
                 {
-                    float dreTempThreshold = p.maxTemp;
-                    bool is_engine = (p.Modules.Contains("ModuleEngines") || p.Modules.Contains("ModuleEnginesFX"));
-                    if (is_engine)
-                        dreTempThreshold *= 0.975f;
-                    else
-                        dreTempThreshold *= 0.85f;
-                     if (dreTempThreshold - p.temperature < data.smallestTempDifferenceFromCritical)
-                    {
-                        data.smallestTempDifferenceFromCritical = dreTempThreshold - p.temperature;
-                        data.highestTemp = p.temperature;
-                    }
+                    data.smallestTempDifferenceFromCritical = dreTempThreshold - p.temperature;
+                    data.highestTemp = p.temperature;
                 }
             }
         }
@@ -1064,6 +1127,8 @@ namespace KerbalFlightData
 
         Data data;
         List<DataSource> dataSources = new List<DataSource>();
+        VisitPart partVisitors;
+        VisitPartModule moduleVisitors;
 
         static IButton toolbarButton;
 
@@ -1074,7 +1139,7 @@ namespace KerbalFlightData
         KFDArea leftArea, rightArea;
         static class TxtIdx
         {
-            public const int MACH = 0, ALT = 1, AIR = 2, STALL = 3, Q = 4, TEMP = 5, TNODE = 6, AP = 7, PE = 8;
+            public const int MACH = 0, ALT = 1, AIR = 2, STALL = 3, Q = 4, TEMP = 5, TNODE = 6, AP = 7, PE = 8, ENGINEPERF = 9, COUNT = 10;
         };
 
         void Awake() // Awake is called when the script instance is being loaded.
@@ -1114,6 +1179,8 @@ namespace KerbalFlightData
                 farData.obtainIntakeData = hasAJE == false;
                 dataSources.Add(farData);
             }
+            if (hasAJE)
+                dataSources.Add(new DataEnginePerformance());
             dataSources.Add(new DataOrbitAndAltitude());
             dataSources.Add(new DataSetupWarnings());
 
@@ -1217,6 +1284,8 @@ namespace KerbalFlightData
             leftArea = null;
             rightArea = null;
 
+            dataSources.Clear();
+
             // unregister, or else errors occur
             GameEvents.onHideUI.Remove(OnHideUI);
             GameEvents.onShowUI.Remove(OnShowUI);
@@ -1296,12 +1365,50 @@ namespace KerbalFlightData
 
             if (on && CheckFullUpdateTimer())
             {
+                // obtain data
+                Vessel vessel = FlightGlobals.ActiveVessel;
                 foreach (DataSource d in dataSources)
                 {
-                    d.Update(data, FlightGlobals.ActiveVessel);
+                    d.Update(data, vessel, ref moduleVisitors, ref partVisitors);
                 }
+                if (partVisitors != null || moduleVisitors != null)
+                {
+                    int iCnt = vessel.parts.Count;
+                    for (int i = 0; i < iCnt; ++i)
+                    {
+                        Part p = vessel.parts[i];
+                        if (p == null) 
+                            continue;
+                        if (partVisitors != null)
+                            partVisitors(data, vessel, p);
+                        if (moduleVisitors != null)
+                        {
+                            int jCnt = p.Modules.Count;
+                            for (int j = 0; j < jCnt; ++j)
+                            {
+                                PartModule m = p.Modules[j];
+                                if (m == null) 
+                                    continue;
+                                moduleVisitors(data, vessel, p, m);
+                            }
+                        }
+                    }
+                }
+                foreach (DataSource d in dataSources)
+                {
+                    d.UpdatePostVisitation(data, vessel);
+                }
+                partVisitors = null;
+                moduleVisitors = null;
+                // done with getting data
 
                 ++markerMaster;
+
+                if (data.isInAtmosphere && data.hasEnginePerf)
+                {
+                    markers[TxtIdx.ENGINEPERF] = markerMaster;
+                }
+
                 if (data.isInAtmosphere && !data.isLanded)
                 {
                     if (data.hasAerodynamics)
@@ -1312,7 +1419,6 @@ namespace KerbalFlightData
                     if (data.hasAirAvailability)
                     {
                         markers[TxtIdx.AIR] = markerMaster;
-
                     }
                     if (data.hasAerodynamics)
                     {
@@ -1414,7 +1520,7 @@ namespace KerbalFlightData
 
             leftArea = KFDArea.Create("left", new Vector2(GuiInfo.instance.screenAnchorLeft, 0f), TextAlignment.Right, null);
             rightArea = KFDArea.Create("right", new Vector2(GuiInfo.instance.screenAnchorRight, 0f), TextAlignment.Left, null);
-            texts = new KFDText[9];
+            texts = new KFDText[TxtIdx.COUNT];
 
             double tmpMach = -1;
             texts[TxtIdx.MACH] = KFDText.Create("mach", MyStyleId.Emph,
@@ -1425,6 +1531,11 @@ namespace KerbalFlightData
             texts[TxtIdx.AIR] = KFDText.Create("air", MyStyleId.Greyed,
                 (Data d) => new KFDContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
                 (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
+
+            double tmpEngPerf = -1;
+            texts[TxtIdx.ENGINEPERF] = KFDText.Create("eng", MyStyleId.Greyed,
+                (Data d) => new KFDContent("Thr. " + d.totalThrust.ToString("F0") + " kN", MyStyleId.Greyed), 
+                (Data d) => SetIf(ref tmpEngPerf, d.totalThrust, !Util.AlmostEqual(d.totalThrust, tmpEngPerf, 0.5)));
 
             int tmpStall = -1;
             texts[TxtIdx.STALL] = KFDText.Create("stall", MyStyleId.Greyed,
@@ -1487,11 +1598,12 @@ namespace KerbalFlightData
             leftArea.Add(texts[TxtIdx.PE]);
             rightArea.Add(texts[TxtIdx.MACH]);
             rightArea.Add(texts[TxtIdx.AIR]);
+            rightArea.Add(texts[TxtIdx.ENGINEPERF]);
             rightArea.Add(texts[TxtIdx.STALL]);
             rightArea.Add(texts[TxtIdx.Q]);
             rightArea.Add(texts[TxtIdx.TEMP]);
 
-            markers = new int[9];
+            markers = new int[TxtIdx.COUNT];
         }
 
 
