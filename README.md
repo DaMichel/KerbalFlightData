@@ -4,9 +4,9 @@ A mod for Kerbal space program which displays
 essential information for piloting space planes 
 under the Ferram-Aerospace-Research mod. It is 
 meant as an minimalistic addition to the stock 
-gui. 
+gui.
 
-See http://i.imgur.com/TX4UnqP.jpg
+<img src="http://i.imgur.com/zxPixmT.jpg"/>
 
 
 Acknowledgement
