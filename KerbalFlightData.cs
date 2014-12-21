@@ -79,7 +79,7 @@ namespace KerbalFlightData
 
         public void PrintGameObjectHierarchy(GameObject o, int indent)
         {
-            Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3"), indent);
+            Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3") + ", en = " + o.activeSelf.ToString(), indent);
             //Out("[", indent);
             foreach (var comp in o.GetComponents<Component>())
             {
@@ -880,6 +880,7 @@ namespace KerbalFlightData
 
         NavBallBurnVector burnVector_ = null;
         GameObject navballGameObject = null;
+        VesselAutopilotUI vesselAutopilotUI = null;
         float uiScalingFactor;
 
         int timeSecondsPerDay;
@@ -888,6 +889,7 @@ namespace KerbalFlightData
         const float navballWidth = 0.072f;
         const float navballGaugeWidth = 0.030f;
         const float navballGaugeWidthNonscaling = 0.030f;
+        const float autopilotButtonPanelWidth = 65.0f/1920.0f;
         //const float baselineFontSize = 16; 
         float baseFontSizeIVA = 16; // font size @ "normal" UI scale setting
         float baseFontSizeExternal = 16;
@@ -961,6 +963,9 @@ namespace KerbalFlightData
             GameObject maneuverVectorGameObject = GameObject.Find("maneuverVector");
             burnVector_ = maneuverVectorGameObject.GetComponent<NavBallBurnVector>();
             camera = ScreenSafeUI.referenceCam;
+            GameObject ui = GameObject.Find("AutopilotModes2");
+            if (ui)
+                vesselAutopilotUI = ui.GetComponent<VesselAutopilotUI>();
 
             Update();
 
@@ -1009,8 +1014,11 @@ namespace KerbalFlightData
                 if (hasGauge)
                     screenAnchorRight = p.x + navballWidth * uiScalingFactor + navballGaugeWidth * uiScalingFactor + navballGaugeWidthNonscaling;
                 else
-                    screenAnchorRight = p.x + navballWidth * uiScalingFactor;            
-                screenAnchorLeft   = p.x - navballWidth * uiScalingFactor;
+                    screenAnchorRight = p.x + navballWidth * uiScalingFactor;
+                if (vesselAutopilotUI && vesselAutopilotUI.modeButtons[0] && vesselAutopilotUI.modeButtons[0].gameObject.activeSelf)
+                    screenAnchorLeft   = p.x - navballWidth * uiScalingFactor - autopilotButtonPanelWidth;
+                else
+                    screenAnchorLeft   = p.x - navballWidth * uiScalingFactor;
                 screenAnchorVertical = p.y;
                 anchorTop = false;
                 fontSize = Mathf.RoundToInt(baseFontSizeExternal * uiScalingFactor);
@@ -1450,18 +1458,13 @@ namespace KerbalFlightData
             }
 
 #if DEBUG
-            if (Input.GetKeyDown(KeyCode.I))
-            {
-                GuiInfo guiInfo = GuiInfo.instance;
-                guiInfo.Init();
-            }
             if (Input.GetKeyDown(KeyCode.O))
             {
                 DMDebug dbg = new DMDebug();
 
-                dbg.Out("---------------------------------------------------------", 0);
-                dbg.PrintGameObjectHierarchy(InternalSpace.Instance.gameObject, 0);
-                dbg.Out("---------------------------------------------------------", 0);
+                //dbg.Out("---------------------------------------------------------", 0);
+                //dbg.PrintGameObjectHierarchy(InternalSpace.Instance.gameObject, 0);
+                //dbg.Out("---------------------------------------------------------", 0);
                 //InternalSpeed spd = InternalSpeed.FindObjectsOfType<InternalSpeed>().FirstOrDefault();
                 //dbg.Out(spd.textObject.text.text, 0);
                 //dbg.Out("---------------------------------------------------------", 0);
@@ -1484,12 +1487,20 @@ namespace KerbalFlightData
                 //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
                 //dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
+                dbg.Out("---------------------------------------------------------", 0);
+                dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
+                dbg.Out("---------------------------------------------------------", 0);
+                dbg.Out("---------------------------------------------------------", 0);
+                var o = GameObject.Find("_UI");  // objects in this ui have coordinates in absolute pixels relative to the screen center, where the y axis goes from top to bottom
+                int indent = 0;
+                dbg.PrintGameObjectHierarchUp(o, out indent);
+                dbg.Out("/////////////////////////////////////////////////////////", 0);
+                dbg.PrintGameObjectHierarchy(o, indent);
+                dbg.Out("---------------------------------------------------------", 0);
+                //var fonts = FindObjectsOfType(typeof(Font)) as Font[];
+                //foreach (Font font in fonts)
+                //    dbg.Out(font.name, 1);
                 //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
-                //dbg.Out("---------------------------------------------------------", 0);
-                var fonts = FindObjectsOfType(typeof(Font)) as Font[];
-                foreach (Font font in fonts)
-                    dbg.Out(font.name, 1);
                 var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
                 f.Write(dbg.ToString());
                 f.Close();
