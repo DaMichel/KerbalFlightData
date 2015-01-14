@@ -216,6 +216,7 @@ namespace KerbalFlightData
         public bool hasAerodynamics = false; // mach, stall, q
         public bool hasEnginePerf = false;
         public double totalThrust;
+        public double throttle;
 
         public int warnQ;
         public int warnStall;
@@ -410,6 +411,7 @@ namespace KerbalFlightData
             callbacksModule += VisitPartModule;
             data.hasEnginePerf = true;
             data.totalThrust = 0;
+            data.throttle = vessel.ctrlState.mainThrottle;
         }
 
         public override void UpdatePostVisitation(Data data, Vessel vessel)
@@ -1544,9 +1546,10 @@ namespace KerbalFlightData
                 (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
 
             double tmpEngPerf = -1;
+            double tmpThrottle = -1;
             texts[TxtIdx.ENGINEPERF] = KFDText.Create("eng", MyStyleId.Greyed,
-                (Data d) => new KFDContent("Thr. " + d.totalThrust.ToString("F0") + " kN", MyStyleId.Greyed), 
-                (Data d) => SetIf(ref tmpEngPerf, d.totalThrust, !Util.AlmostEqual(d.totalThrust, tmpEngPerf, 0.5)));
+                (Data d) => new KFDContent(String.Format("Thr. {0} kN ({1}%)", d.totalThrust.ToString("F0"), (100*d.throttle).ToString("F0")), MyStyleId.Greyed), 
+                (Data d) => SetIf(ref tmpEngPerf, ref tmpThrottle, d.totalThrust, d.throttle, !(Util.AlmostEqual(d.totalThrust, tmpEngPerf, 0.5) && Util.AlmostEqual(d.throttle, tmpThrottle, 0.005))));
 
             int tmpStall = -1;
             texts[TxtIdx.STALL] = KFDText.Create("stall", MyStyleId.Greyed,
@@ -1563,7 +1566,6 @@ namespace KerbalFlightData
             texts[TxtIdx.TEMP] = KFDText.Create("temp", MyStyleId.Greyed,
                 (Data d) => new KFDContent("T " + d.highestTemp.ToString("F0") + " °C", d.warnTemp),
                 (Data d) => SetIf(ref tmpTemp, ref tmpWarnTemp, d.highestTemp, d.warnTemp, !Util.AlmostEqual(d.highestTemp, tmpTemp, 1) || d.warnTemp != tmpWarnTemp));
-
 
             double tmpAlt = -1;
             texts[TxtIdx.ALT] = KFDText.Create("alt", MyStyleId.Emph,
