@@ -102,7 +102,7 @@ namespace KerbalFlightData
             Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3"), indent);
         }
 
-        public void PrintHierarchy(UnityEngine.Object instance, int indent = 0)
+        public void PrintHierarchy(UnityEngine.Object instance, int indent = 0, bool recursive = true)
         {
             try
             {
@@ -115,7 +115,7 @@ namespace KerbalFlightData
                 {
                     var value = field.GetValue(instance);
                     Out(field.FieldType.Name + " " + field.Name + " = " + value, indent + 1);
-                    if (IsOkayToExpand(field.Name, field.FieldType))
+                    if (IsOkayToExpand(field.Name, field.FieldType) && recursive)
                     {
                         PrintHierarchy((UnityEngine.Object)value, indent + 2);
                     }
@@ -132,7 +132,7 @@ namespace KerbalFlightData
                         value = e.ToString();
                     }
                     Out(prop.PropertyType.Name + " " + prop.Name + " = " + value, indent + 1);
-                    if (IsOkayToExpand(prop.Name, prop.PropertyType))
+                    if (IsOkayToExpand(prop.Name, prop.PropertyType) && recursive)
                     {
                         PrintHierarchy((UnityEngine.Object)value, indent + 2);
                     }
@@ -205,403 +205,441 @@ namespace KerbalFlightData
 
     #endregion
 
-    #region DataAcquisition
-    public class Data
+#region DataAcquisition
+public class Data
+{
+    public double machNumber;
+    //public double airAvailability;
+    public double stallPercentage;
+    public double q;
+    //public bool hasAirAvailability = false;
+    public bool hasAerodynamics = false; // mach, q
+    public bool hasStalls = false;
+    public bool hasEnginePerf = false;
+    public double totalThrust;
+    public double throttle;
+
+    public int warnQ;
+    public int warnStall;
+    //public int warnAir;
+    public int warnTemp;
+
+    public double apoapsis = 0;
+    public double periapsis = 0;
+    public double timeToNode = 0;
+    public enum NextNode
     {
-        public double machNumber;
-        public double airAvailability;
-        public double stallPercentage;
-        public double q;
-        public bool hasAirAvailability = false;
-        public bool hasAerodynamics = false; // mach, stall, q
-        public bool hasEnginePerf = false;
-        public double totalThrust;
-        public double throttle;
-
-        public int warnQ;
-        public int warnStall;
-        public int warnAir;
-        public int warnTemp;
-
-        public double apoapsis = 0;
-        public double periapsis = 0;
-        public double timeToNode = 0;
-        public enum NextNode
-        {
-            Ap, Pe, Escape, Maneuver, Encounter
-        };
-        public NextNode nextNode = NextNode.Ap;
-
-        public bool isAtmosphericLowLevelFlight;
-        public bool isInAtmosphere;
-        public bool isLanded;
-
-        public double altitude = 0;
-        public double radarAltitude = 0;
-
-        public double highestTemp = 0;
-        public double highestRelativeTemp = 0;
-        public double smallestTempDifferenceFromCritical = 0;
-        public bool hasTemp = false;
+        Ap, Pe, Escape, Maneuver, Encounter
     };
+    public NextNode nextNode = NextNode.Ap;
+
+    public bool isAtmosphericLowLevelFlight;
+    public bool isInAtmosphere;
+    public bool isLanded;
+
+    public double altitude = 0;
+    public double radarAltitude = 0;
+    public double verticalSpeed = 0; // 0: < 5 ms, 1: < 10, 2: < 100,  3 >= 100
+                                        // 0: O
+                                        // 1: +
+                                        // 2: ++
+                                        // 3: +++ or so...
+    public double timeToImpact = 0;
+
+    public double highestTemp = 0;
+    public double tempWarnMetric = 0;
+    public bool hasTemp = false;
+};
 
 
-    public delegate void VisitPartModule(Data data, Vessel vessel, Part part, PartModule module);
-    public delegate void VisitPart(Data data, Vessel vessel, Part part);
+class DataFAR
+{
+    private static Type FARAPI = null;
+    private static bool farDataIsObtainedOkay = false;
+    private static MethodInfo VesselTermStallFrac;
+    private static MethodInfo VesselDynPres;
+    private static MethodInfo VesselFlightInfo;
+    public  static bool obtainIntakeData = true;
 
-
-    abstract class DataSource
+    public static void Init(Type FARAPI_)
     {
-        public abstract void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart);
-        public abstract void UpdatePostVisitation(Data data, Vessel vessel);
-    };
-
-
-    class DataFAR : DataSource
-    {
-        private Type FARControlSys = null;
-        private bool farDataIsObtainedOkay = false;
-        private FieldInfo fieldControlSys; // of FARControlSys
-        private FieldInfo fieldQ, fieldMach, fieldAir, fieldStall;
-        public bool obtainIntakeData = true;
-
-        public DataFAR(Type FARControlSys_)
-            : base()
+        FARAPI = FARAPI_;
+        //DMDebug.Log2(String.Format("FARAPI = {0}", FARAPI.ToString()));
+        foreach (var method in FARAPI.GetMethods(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public))
         {
-            FARControlSys = FARControlSys_;
-            fieldControlSys = FARControlSys.GetField("activeControlSys", BindingFlags.NonPublic | BindingFlags.Static);
-            foreach (var field in FARControlSys.GetFields(BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public))
+            //DMDebug.Log2(String.Format("method = {0}", method.Name));
+            if (method.Name == "VesselTermStallFrac")
+                VesselTermStallFrac = method;
+            else if (method.Name == "VesselDynPres")
+                VesselDynPres = method;
+            else if (method.Name == "VesselFlightInfo")
+                VesselFlightInfo = method;
+        }
+    }
+
+    private static bool GetFARData_Internal(Data data, Vessel vessel)
+    {
+        var arg = new object[] {vessel}; 
+        object instance = VesselFlightInfo.Invoke(null, arg);  // this looks stupidly costly, but what can we do?!
+        //DMDebug.Log2("FAR seems to be " + ((instance == null) ? "not " : "") + "ready");
+        if (instance == null) 
+        {
+            data.hasAerodynamics = false;
+            data.hasStalls = false;
+            //data.hasAirAvailability = false;
+            return false;
+        }
+        else
+        {
+            // any error here though, is a real error. It would probably mean that the assumptions about FARControlSys were invalidated by version updates.
+            data.q = (double)VesselDynPres.Invoke(null, arg);
+            data.machNumber = vessel.mach;
+            //data.airAvailability = obtainIntakeData ? (double)fieldAir.GetValue(null) : 1.0;
+            data.stallPercentage = (double)VesselTermStallFrac.Invoke(null, arg);
+            data.hasAerodynamics = true;
+            data.hasStalls = true;
+            //data.hasAirAvailability = obtainIntakeData;
+        }
+        return true;
+    }
+
+    public static bool GetFARData(Data data, Vessel vessel)
+    {
+        bool ok = GetFARData_Internal(data, vessel);
+        if (ok)
+        {
+            if (!farDataIsObtainedOkay)
             {
-                if (field.Name == "q")
-                    fieldQ = field;
-                else if (field.Name == "MachNumber")
-                    fieldMach = field;
-                else if (field.Name == "intakeDeficit")
-                    fieldAir = field;
-                else if (field.Name == "stallPercentage")
-                    fieldStall = field;
+                DMDebug.Log("Data from FAR obtained successfully");
+                farDataIsObtainedOkay = true;
             }
         }
-
-        bool GetFARData(Data data)
+        else
         {
-            var instance = fieldControlSys.GetValue(null);
-            if (instance == null)  // maybe there is currently no active control system. That's okay ...
+            if (farDataIsObtainedOkay)
             {
-                data.hasAerodynamics = false;
-                data.hasAirAvailability = false;
-                return false;
+                DMDebug.Log("Failed to get data from FAR although it was obtained successfully before");
+                farDataIsObtainedOkay = false;
             }
-            else
-            {
-                // any error here though, is a real error. It would probably mean that the assumptions about FARControlSys were invalidated by version updates.
-                data.q = (double)fieldQ.GetValue(instance);
-                data.machNumber = (double)fieldMach.GetValue(instance);
-                data.airAvailability = obtainIntakeData ? (double)fieldAir.GetValue(null) : 1.0;
-                data.stallPercentage = (double)fieldStall.GetValue(null);
-                data.hasAerodynamics = true;
-                data.hasAirAvailability = obtainIntakeData;
-            }
-            return true;
-        }
-
-        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
-        {
-            bool ok = GetFARData(data);
-            if (ok)
-            {
-                if (!farDataIsObtainedOkay)
-                {
-                    DMDebug.Log("Data from FAR obtained successfully");
-                    farDataIsObtainedOkay = true;
-                }
-            }
-            else
-            {
-                if (farDataIsObtainedOkay)
-                {
-                    DMDebug.Log("Failed to get data from FAR although it was obtained successfully before");
-                    farDataIsObtainedOkay = false;
-                }
                 
-            }
         }
-
-        public override void UpdatePostVisitation(Data data, Vessel vessel)
-        {
-        }
-    };
+        return ok;
+    }
+};
 
 
-    class DataIntakeAirStock : DataSource
+class DataSources
+{
+    private static PartResourceLibrary l = PartResourceLibrary.Instance;
+    private static bool hasFAR  = false;
+    //private static bool obtainIntakeAir   = false;
+    //private static bool hasDre            = false;
+    //private static bool hasAJE            = false;
+
+    //private static double airDemand = 0;
+    //private static double airAvailable = 0;
+    private static double totalThrust = 0;
+    
+    private static bool hasEngine = false;
+    private static bool lastPartIsEngine = false;
+    private static bool needsTemp = false;
+    private const double tempWarnThreshold1 = 1000.0;
+    private const double tempWarnThreshold2 = 600.0;
+    private const double tempWarnThreshold3 = 300.0;
+
+    public static void Init()
     {
-        private double airDemand;
-        private double airAvailable;
-        PartResourceLibrary l = PartResourceLibrary.Instance;
-
-        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
+        foreach (var assembly in AssemblyLoader.loadedAssemblies)
         {
-            data.hasAirAvailability = data.isInAtmosphere;
-            if (!data.hasAirAvailability) return;
-
-            airAvailable = 0;
-            airDemand    = 0;
-
-            callbacksModule += VisitPartModule;
-        }
-
-        public override void UpdatePostVisitation(Data data, Vessel vessel)
-        {
-            data.airAvailability = airAvailable / airDemand;
-        }
-
-        void VisitPartModule(Data data, Vessel vessel, Part part, PartModule m)
-        {
-            double fixedDeltaTime = TimeWarp.fixedDeltaTime;
-            if (m is ModuleEngines)
+            //DMDebug.Log2(assembly.name);
+            if (assembly.name == "FerramAerospaceResearch")
             {
-                ModuleEngines e = m as ModuleEngines;
-                if (e.EngineIgnited && !e.engineShutdown)
+                var types = assembly.assembly.GetExportedTypes();
+                foreach (Type t in types)
                 {
-                    foreach (Propellant v in e.propellants)
+                    //DMDebug.Log2(t.FullName);
+                    if (t.FullName.Equals("FerramAerospaceResearch.FARAPI"))
                     {
-                        string propName = v.name;
-                        PartResourceDefinition r = l.resourceDefinitions[propName];
-                        if (propName == "IntakeAir")
-                        {
-                            airDemand += v.currentRequirement;
-                            continue;
-                        }
+                        DataFAR.Init(t);
+                        hasFAR = true;
                     }
                 }
             }
-            else if (m is ModuleEnginesFX)
-            {
-                ModuleEnginesFX e = m as ModuleEnginesFX;
-                if (e.EngineIgnited && !e.engineShutdown)
-                {
-                    foreach (Propellant v in e.propellants)
-                    {
-                        string propName = v.name;
-                        PartResourceDefinition r = l.resourceDefinitions[propName];
-                        if (propName == "IntakeAir")
-                        {
-                            airDemand += v.currentRequirement;
-                            continue;
-                        }
-                    }
-                }
-            }
-            else if (m is ModuleResourceIntake)
-            {
-                ModuleResourceIntake i = m as ModuleResourceIntake;
-                if (i.intakeEnabled)
-                {
-                    airAvailable += i.airFlow * fixedDeltaTime;
-                }
-            }
+            //else if (assembly.name == "DeadlyReentry")
+            //{
+            //    hasDre = true;
+            //}
+            //else if (assembly.name == "AJE")
+            //{
+            //    hasAJE = true;
+            //    //obtainIntakeAir  = false;
+            //}
         }
-    };
+    }
 
-
-    class DataEnginePerformance : DataSource
+    /*
+     * collects engine data, intake air and determines if the part is an engine.
+     */
+    private static void VisitModule(PartModule m, Part p, Vessel vessel)
     {
-        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
+        double fixedDeltaTime = TimeWarp.fixedDeltaTime;
+        if (m is ModuleEngines)
         {
-            callbacksModule += VisitPartModule;
-            data.hasEnginePerf = true;
-            data.totalThrust = 0;
-            data.throttle = vessel.ctrlState.mainThrottle;
-        }
-
-        public override void UpdatePostVisitation(Data data, Vessel vessel)
-        {
-        }
-
-        void VisitPartModule(Data data, Vessel vessel, Part part, PartModule m)
-        {
-            if (m is ModuleEngines)
+            ModuleEngines e = m as ModuleEngines;
+            if (e.EngineIgnited && !e.engineShutdown)
             {
-                ModuleEngines e = m as ModuleEngines;
-                if (e.EngineIgnited && !e.engineShutdown)
-                {
-                    data.totalThrust += e.finalThrust;
-                }
-            }
-            else if (m is ModuleEnginesFX)
-            {
-                ModuleEnginesFX e = m as ModuleEnginesFX;
-                if (e.EngineIgnited && !e.engineShutdown)
-                {
-                    data.totalThrust += e.finalThrust;
-                }
+                //if (obtainIntakeAir) // don't iterate propellants if we don't have to
+                //{
+                //    foreach (Propellant v in e.propellants)
+                //    {
+                //        string propName = v.name;
+                //        PartResourceDefinition r = l.resourceDefinitions[propName];
+                //        if (propName == "IntakeAir")
+                //        {
+                //            airDemand += v.currentRequirement;
+                //            continue;
+                //        }
+                //    }
+                //}
+                totalThrust += e.finalThrust;
+                lastPartIsEngine = true;
             }
         }
-    };
+        else if (m is ModuleEnginesFX)
+        {
+            ModuleEnginesFX e = m as ModuleEnginesFX;
+            if (e.EngineIgnited && !e.engineShutdown)
+            {
+                //if (obtainIntakeAir) // don't iterate propellants if we don't have to
+                //{
+                //    foreach (Propellant v in e.propellants)
+                //    {
+                //        string propName = v.name;
+                //        PartResourceDefinition r = l.resourceDefinitions[propName];
+                //        if (propName == "IntakeAir")
+                //        {
+                //            airDemand += v.currentRequirement;
+                //            continue;
+                //        }
+                //    }
+                //}
+                totalThrust += e.finalThrust;
+                lastPartIsEngine = true;
+            }
+        }
+        //else if (m is ModuleResourceIntake)
+        //{
+        //    ModuleResourceIntake i = m as ModuleResourceIntake;
+        //    if (i.intakeEnabled)
+        //    {
+        //        airAvailable += i.airFlow * fixedDeltaTime;
+        //    }
+        //}
+    }
 
 
-    class DataSetupWarnings : DataSource
+    private static void FillLocationData(Data data, Vessel vessel)
     {
-        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
+        Orbit o = vessel.orbit;
+        CelestialBody b = vessel.mainBody;
+
+        if (o != null && b != null)
         {
-            if (data.hasAerodynamics)
+            data.periapsis = o.PeA;
+            data.apoapsis = o.ApA;
+
+            double time = Planetarium.GetUniversalTime();
+            double timeToEnd = o.EndUT - time;
+            double timeToAp = o.timeToAp;
+            double timeToPe = o.timeToPe;
+
+            if (data.apoapsis < data.periapsis || timeToAp <= 0)
+                timeToAp = double.PositiveInfinity; // not gona happen
+            if (timeToPe <= 0)
+                timeToPe = double.PositiveInfinity;
+
+            if (timeToEnd <= timeToPe && timeToEnd <= timeToAp && o.patchEndTransition != Orbit.PatchTransitionType.FINAL && o.patchEndTransition != Orbit.PatchTransitionType.INITIAL)
             {
-                if (data.q < 10)
-                {
+                data.timeToNode = timeToEnd;
+                if (o.patchEndTransition == Orbit.PatchTransitionType.ESCAPE) data.nextNode = Data.NextNode.Escape;
+                else if (o.patchEndTransition == Orbit.PatchTransitionType.ENCOUNTER) data.nextNode = Data.NextNode.Encounter;
+                else data.nextNode = Data.NextNode.Maneuver;
+            }
+            else if (timeToAp < timeToPe)
+            {
+                data.timeToNode = o.timeToAp;
+                data.nextNode = Data.NextNode.Ap;
+            }
+            else
+            {
+                data.timeToNode = timeToPe;
+                data.nextNode = Data.NextNode.Pe;
+            }
+
+            if (b.atmosphere)
+            {
+                double hmin = (double)(((int)(b.atmosphereDepth * 0.33333333e-3))) * 1000;
+                data.isAtmosphericLowLevelFlight = !(data.apoapsis > hmin || data.periapsis > hmin);
+            }
+            else
+                data.isAtmosphericLowLevelFlight = false;
+            data.isInAtmosphere = b.atmosphere && vessel.altitude < b.atmosphereDepth;
+        }
+
+        data.altitude = vessel.altitude;
+        data.radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
+        data.verticalSpeed = vessel.verticalSpeed;
+
+        data.timeToImpact = data.verticalSpeed < 0 ? -data.radarAltitude/data.verticalSpeed : double.PositiveInfinity;
+
+        data.isLanded = false;
+        if (vessel.LandedOrSplashed)
+        {
+            double srfSpeedSqr = vessel.GetSrfVelocity().sqrMagnitude;
+            if (srfSpeedSqr < 0.01)
+                data.isLanded = true;
+        }
+    }
+
+    private static void UpdateWarningIndicators(Data data)
+    {
+        if (data.hasAerodynamics)
+        {
+            if (data.q < 10)
+            {
+                data.warnQ = MyStyleId.Greyed;
+                data.warnStall = MyStyleId.Greyed;
+            }
+            else
+            {
+                if (data.q > 40000)
+                    data.warnQ = MyStyleId.Warn1;
+                else
                     data.warnQ = MyStyleId.Greyed;
+
+                if (data.stallPercentage > 0.5)
+                    data.warnStall = MyStyleId.Warn2;
+                else if (data.stallPercentage > 0.005)
+                    data.warnStall = MyStyleId.Warn1;
+                else
                     data.warnStall = MyStyleId.Greyed;
-                }
-                else
-                {
-                    if (data.q > 40000)
-                        data.warnQ = MyStyleId.Warn1;
-                    else
-                        data.warnQ = MyStyleId.Greyed;
-
-                    if (data.stallPercentage > 0.5)
-                        data.warnStall = MyStyleId.Warn2;
-                    else if (data.stallPercentage > 0.005)
-                        data.warnStall = MyStyleId.Warn1;
-                    else
-                        data.warnStall = MyStyleId.Greyed;
-                }
-            }
-            if (data.hasAirAvailability)
-            {
-                if (data.airAvailability < 1.05)
-                    data.warnAir = MyStyleId.Warn2;
-                else if (data.airAvailability < 1.5)
-                    data.warnAir = MyStyleId.Warn1;
-                else
-                    data.warnAir = MyStyleId.Greyed;
-            }
-            if (data.hasTemp)
-            {
-                //if (data.highestRelativeTemp > 0.95)
-                if (data.smallestTempDifferenceFromCritical < 50)
-                    data.warnTemp = MyStyleId.Warn2;
-                else if (data.smallestTempDifferenceFromCritical < 200)
-                //else if (data.highestRelativeTemp > 0.80)
-                    data.warnTemp = MyStyleId.Warn1;
-                else
-                    data.warnTemp = MyStyleId.Greyed;
             }
         }
-
-        public override void UpdatePostVisitation(Data data, Vessel vessel)
+        //if (data.hasAirAvailability)
+        //{
+        //    if (data.airAvailability < 1.05)
+        //        data.warnAir = MyStyleId.Warn2;
+        //    else if (data.airAvailability < 1.5)
+        //        data.warnAir = MyStyleId.Warn1;
+        //    else
+        //        data.warnAir = MyStyleId.Greyed;
+        //}
+        if (data.hasTemp)
         {
+            if (data.tempWarnMetric < tempWarnThreshold3)
+                data.warnTemp = MyStyleId.Warn2;
+            else if (data.tempWarnMetric < tempWarnThreshold2)
+                data.warnTemp = MyStyleId.Warn1;
+            else if (data.tempWarnMetric < tempWarnThreshold1)
+                data.warnTemp = MyStyleId.Emph;
+            else
+                data.warnTemp = MyStyleId.Greyed;
         }
     }
 
 
-
-    class DataOrbitAndAltitude : DataSource
+    public static void FillDataInstance(Data data, Vessel vessel)
     {
-        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
+        // air for the engines
+        //airAvailable = 0;
+        //airDemand    = 0;
+        // engine perf
+        totalThrust = 0;
+        // location, put stuff in data, need for further processing if we are atmospheric
+        FillLocationData(data, vessel);
+        // temp
+        //double heatFlux = 0;
+        needsTemp = data.isInAtmosphere;
+        data.highestTemp = double.NegativeInfinity;
+        double maxScore = double.NegativeInfinity;
+        double tempWeight  = 0;
+        double averageTempMetric = 0;
+        //  iterate over the vessel parts
+        double fixedDeltaTime = TimeWarp.fixedDeltaTime;
+        int partCnt = vessel.parts.Count;
+        for (int iPart = 0; iPart < partCnt; ++iPart)
         {
-            Orbit o = vessel.orbit;
-            CelestialBody b = vessel.mainBody;
-
-            if (o != null && b != null)
+            Part p = vessel.parts[iPart];
+            if (p == null) 
+                continue;
+            lastPartIsEngine = false;
+            // visit modules
+            int moduleCnt = p.Modules.Count;
+            for (int jModule = 0; jModule < moduleCnt; ++jModule)
             {
-                data.periapsis = o.PeA;
-                data.apoapsis = o.ApA;
-
-                double time = Planetarium.GetUniversalTime();
-                double timeToEnd = o.EndUT - time;
-                double timeToAp = o.timeToAp;
-                double timeToPe = o.timeToPe;
-
-                if (data.apoapsis < data.periapsis || timeToAp <= 0)
-                    timeToAp = double.PositiveInfinity; // not gona happen
-                if (timeToPe <= 0)
-                    timeToPe = double.PositiveInfinity;
-
-                if (timeToEnd <= timeToPe && timeToEnd <= timeToAp && o.patchEndTransition != Orbit.PatchTransitionType.FINAL && o.patchEndTransition != Orbit.PatchTransitionType.INITIAL)
-                {
-                    data.timeToNode = timeToEnd;
-                    if (o.patchEndTransition == Orbit.PatchTransitionType.ESCAPE) data.nextNode = Data.NextNode.Escape;
-                    else if (o.patchEndTransition == Orbit.PatchTransitionType.ENCOUNTER) data.nextNode = Data.NextNode.Encounter;
-                    else data.nextNode = Data.NextNode.Maneuver;
-                }
-                else if (timeToAp < timeToPe)
-                {
-                    data.timeToNode = o.timeToAp;
-                    data.nextNode = Data.NextNode.Ap;
-                }
-                else
-                {
-                    data.timeToNode = timeToPe;
-                    data.nextNode = Data.NextNode.Pe;
-                }
-
-                if (b.atmosphere)
-                {
-                    double hmin = (double)(((int)(b.maxAtmosphereAltitude * 0.33333333e-3))) * 1000;
-                    data.isAtmosphericLowLevelFlight = !(data.apoapsis > hmin || data.periapsis > hmin);
-                }
-                else
-                    data.isAtmosphericLowLevelFlight = false;
-                data.isInAtmosphere = b.atmosphere && vessel.altitude < b.maxAtmosphereAltitude;
+                PartModule m = p.Modules[jModule];
+                if (m == null) 
+                    continue;
+                // do things with modules
+                VisitModule(m, p, vessel);
             }
-
-            data.altitude = vessel.altitude;
-            data.radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
-
-            data.isLanded = false;
-            if (vessel.LandedOrSplashed)
+            hasEngine |= lastPartIsEngine;
+            // do things with parts
+            if (p.temperature != 0f && needsTemp) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
             {
-                double srfSpeedSqr = vessel.GetSrfVelocity().sqrMagnitude;
-                if (srfSpeedSqr < 0.01)
-                    data.isLanded = true;
-            }
-        }
+                //double dreTempThreshold = p.maxTemp;
+                //bool is_engine = lastPartIsEngine;
+                //if (is_engine)
+                //    dreTempThreshold *= 0.975f;
+                //else
+                //    dreTempThreshold *= 0.85f;
+                //if (dreTempThreshold - p.temperature < data.smallestTempDifferenceFromCritical)
+                //{
+                //    data.smallestTempDifferenceFromCritical = dreTempThreshold - p.temperature;
+                //    data.highestTemp = p.temperature;
 
-        public override void UpdatePostVisitation(Data data, Vessel vessel)
-        {
-        }
-    }
-
-
-
-    class DataTemperature : DataSource
-    {
-        public override void Update(Data data, Vessel vessel, ref VisitPartModule callbacksModule, ref VisitPart callbacksPart)
-        {
-            data.hasTemp = data.isInAtmosphere;
-            if (!data.hasTemp) return;
-
-            callbacksPart += VisitPart;
-
-            data.highestTemp = double.NegativeInfinity;
-            data.highestRelativeTemp = double.NegativeInfinity;
-            data.smallestTempDifferenceFromCritical = double.PositiveInfinity;
-        }
-
-        public override void UpdatePostVisitation(Data data, Vessel vessel)
-        {
-        }
-
-        void VisitPart(Data data, Vessel vessel, Part p)
-        {
-            if (p.temperature != 0f) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
-            {
-                float dreTempThreshold = p.maxTemp;
-                bool is_engine = (p.Modules.Contains("ModuleEngines") || p.Modules.Contains("ModuleEnginesFX"));
-                if (is_engine)
-                    dreTempThreshold *= 0.975f;
-                else
-                    dreTempThreshold *= 0.85f;
-                    if (dreTempThreshold - p.temperature < data.smallestTempDifferenceFromCritical)
+                //}
+                double score = p.maxTemp/(Math.Max(0, 1.0 - p.temperature / p.maxTemp) + 1.0e-6) * (1.0 + Math.Max(0.0, p.thermalRadiationFlux + p.thermalConvectionFlux + p.thermalConductionFlux)*p.thermalMassReciprocal*fixedDeltaTime/p.maxTemp);
+                averageTempMetric += score * Math.Max(0, p.maxTemp - p.temperature);
+                tempWeight += score;
+                if (score > maxScore)
                 {
-                    data.smallestTempDifferenceFromCritical = dreTempThreshold - p.temperature;
+                    maxScore = score;
                     data.highestTemp = p.temperature;
+                    data.tempWarnMetric =  p.maxTemp - p.temperature;
                 }
+                //DMDebug.Log(string.Format("{0} tmax {1}, t {2}, diff {3}", p.name, p.maxTemp.ToString(), p.temperature.ToString(), (p.maxTemp - p.temperature).ToString()));
             }
         }
-    }
 
-    #endregion
+        // air
+        //data.airAvailability = airAvailable / airDemand;
+        //data.hasAirAvailability = data.isInAtmosphere;
+        // engine
+        data.totalThrust = totalThrust;
+        data.hasEnginePerf = hasEngine;
+        data.throttle = vessel.ctrlState.mainThrottle;
+
+        // temp
+       data.hasTemp = needsTemp && data.tempWarnMetric < tempWarnThreshold1;
+        //data.highestTemp -= 273.16;
+        //data.hasTemp = true;
+
+        if (hasFAR)
+            DataFAR.GetFARData(data, vessel);
+        else
+        {
+            data.hasAerodynamics = true;
+            data.machNumber = vessel.mach;
+            data.q = vessel.dynamicPressurekPa * 1.0e3; // convert to Pa
+        }
+
+        UpdateWarningIndicators(data);
+    }
+};
+
+
+#endregion
 
     #region GUI classes
 
@@ -1134,67 +1172,29 @@ namespace KerbalFlightData
 
         bool displayUIByGuiEvent = true;
         bool displayUIByToolbarClick = true;
-
-        Data data;
-        List<DataSource> dataSources = new List<DataSource>();
-        VisitPart partVisitors;
-        VisitPartModule moduleVisitors;
-
         static IButton toolbarButton;
+
+        Data data = new Data();
 
         // gui stuff
         KFDText[] texts = null;
         int[] markers = null;
         int markerMaster = 0;
         KFDArea leftArea, rightArea;
-        static class TxtIdx
+        enum TxtIdx
         {
-            public const int MACH = 0, ALT = 1, AIR = 2, STALL = 3, Q = 4, TEMP = 5, TNODE = 6, AP = 7, PE = 8, ENGINEPERF = 9, COUNT = 10;
+            MACH = 0,  // AIR = 2
+                             ALT, STALL, Q, TEMP, TNODE, AP, PE, ENGINEPERF, COUNT
+        };
+        static string[] verticalSpeedSymbols = {
+            "", "+", "++", "+++", "", "-", "--", "---"
         };
 
         void Awake() // Awake is called when the script instance is being loaded.
         {
             DMDebug.Log2(name + " Awake!");
-            dataSources.Clear();
-            DataFAR farData = null;
-            bool hasAJE = false;
-            foreach (var assembly in AssemblyLoader.loadedAssemblies)
-            {
-                //DMDebug.Log2(assembly.name);
-                if (assembly.name == "FerramAerospaceResearch")
-                {
-                    var types = assembly.assembly.GetExportedTypes();
-                    foreach (Type t in types)
-                    {
-                        //DMDebug.Log2(t.FullName);
-                        if (t.FullName.Equals("ferram4.FARControlSys"))
-                        {
-                            farData = new DataFAR(t);
-                        }
-                    }
-                }
-                else if (assembly.name == "DeadlyReentry")
-                {
-                    dataSources.Add(new DataTemperature());
-                }
-                else if (assembly.name == "AJE")
-                {
-                    hasAJE = true;
-                }
-            }
-            if (farData == null)
-                dataSources.Add(new DataIntakeAirStock());
-            else
-            {
-                farData.obtainIntakeData = hasAJE == false;
-                dataSources.Add(farData);
-            }
-            if (hasAJE)
-                dataSources.Add(new DataEnginePerformance());
-            dataSources.Add(new DataOrbitAndAltitude());
-            dataSources.Add(new DataSetupWarnings());
-
-            data = new Data();
+            
+            DataSources.Init();
 
             if (ToolbarManager.ToolbarAvailable)
             {
@@ -1294,8 +1294,6 @@ namespace KerbalFlightData
             leftArea = null;
             rightArea = null;
 
-            dataSources.Clear();
-
             // unregister, or else errors occur
             GameEvents.onHideUI.Remove(OnHideUI);
             GameEvents.onShowUI.Remove(OnShowUI);
@@ -1344,10 +1342,9 @@ namespace KerbalFlightData
         void LateUpdate()
         {
             dtSinceLastUpdate += Time.unscaledDeltaTime;
-
+            
             if (!GuiInfo.instance.ready)
                 SetupGUI();
-            
             bool on = CheckShouldDisplayBeOn();
             ToggleDisplay(on);
 
@@ -1372,81 +1369,42 @@ namespace KerbalFlightData
                 leftArea.verticalAlignment = guiInfo.anchorTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
                 rightArea.verticalAlignment = guiInfo.anchorTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
             }
-
             if (on && CheckFullUpdateTimer())
             {
                 // obtain data
                 Vessel vessel = FlightGlobals.ActiveVessel;
-                foreach (DataSource d in dataSources)
-                {
-                    d.Update(data, vessel, ref moduleVisitors, ref partVisitors);
-                }
-                if (partVisitors != null || moduleVisitors != null)
-                {
-                    int iCnt = vessel.parts.Count;
-                    for (int i = 0; i < iCnt; ++i)
-                    {
-                        Part p = vessel.parts[i];
-                        if (p == null) 
-                            continue;
-                        if (partVisitors != null)
-                            partVisitors(data, vessel, p);
-                        if (moduleVisitors != null)
-                        {
-                            int jCnt = p.Modules.Count;
-                            for (int j = 0; j < jCnt; ++j)
-                            {
-                                PartModule m = p.Modules[j];
-                                if (m == null) 
-                                    continue;
-                                moduleVisitors(data, vessel, p, m);
-                            }
-                        }
-                    }
-                }
-                foreach (DataSource d in dataSources)
-                {
-                    d.UpdatePostVisitation(data, vessel);
-                }
-                partVisitors = null;
-                moduleVisitors = null;
-                // done with getting data
-
+                DataSources.FillDataInstance(data, vessel);
                 ++markerMaster;
-
                 if (data.isInAtmosphere && data.hasEnginePerf)
                 {
-                    markers[TxtIdx.ENGINEPERF] = markerMaster;
+                    markers[(int)TxtIdx.ENGINEPERF] = markerMaster;
                 }
-
                 if (data.isInAtmosphere && !data.isLanded)
                 {
                     if (data.hasAerodynamics)
                     {
-                        markers[TxtIdx.MACH] = markerMaster;
-
+                        markers[(int)TxtIdx.MACH] = markerMaster;
+                        markers[(int)TxtIdx.Q] = markerMaster;
                     }
-                    if (data.hasAirAvailability)
-                    {
-                        markers[TxtIdx.AIR] = markerMaster;
-                    }
-                    if (data.hasAerodynamics)
-                    {
-                        markers[TxtIdx.Q] = markerMaster;
-                        markers[TxtIdx.STALL] = markerMaster;
+                    //if (data.hasAirAvailability)
+                    //{
+                    //    markers[TxtIdx.AIR] = markerMaster;
+                    //}
 
+                    if (data.hasStalls)
+                    {
+                        markers[(int)TxtIdx.STALL] = markerMaster;
                     }
                     if (data.hasTemp)
                     {
-                        markers[TxtIdx.TEMP] = markerMaster;
+                        markers[(int)TxtIdx.TEMP] = markerMaster;
                     }
                 }
-                markers[TxtIdx.ALT] = markerMaster;
+                markers[(int)TxtIdx.ALT] = markerMaster;
                 if (data.isAtmosphericLowLevelFlight == false)
                 {
-                    markers[TxtIdx.TNODE] = markers[TxtIdx.AP] = markers[TxtIdx.PE] = markerMaster;
+                    markers[(int)TxtIdx.TNODE] = markers[(int)TxtIdx.AP] = markers[(int)TxtIdx.PE] = markerMaster;
                 }
-
                 // disable unmarked texts, update marked ones
                 for (int i = 0; i < texts.Length; ++i)
                 {
@@ -1454,11 +1412,9 @@ namespace KerbalFlightData
                     if (markers[i] == markerMaster)
                         texts[i].UpdateText(data);
                 }
-
                 leftArea.UpdateLayout();
                 rightArea.UpdateLayout();
             }
-
 #if DEBUG
             if (Input.GetKeyDown(KeyCode.O))
             {
@@ -1489,23 +1445,29 @@ namespace KerbalFlightData
                 //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
                 //dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
-                dbg.Out("---------------------------------------------------------", 0);
-                dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
-                dbg.Out("---------------------------------------------------------", 0);
-                dbg.Out("---------------------------------------------------------", 0);
-                var o = GameObject.Find("_UI");  // objects in this ui have coordinates in absolute pixels relative to the screen center, where the y axis goes from top to bottom
-                int indent = 0;
-                dbg.PrintGameObjectHierarchUp(o, out indent);
-                dbg.Out("/////////////////////////////////////////////////////////", 0);
-                dbg.PrintGameObjectHierarchy(o, indent);
-                dbg.Out("---------------------------------------------------------", 0);
-                //var fonts = FindObjectsOfType(typeof(Font)) as Font[];
+                //dbg.Out("---------------------------------------------------------", 0);
+                //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
+                //dbg.Out("---------------------------------------------------------", 0);
+                //dbg.Out("---------------------------------------------------------", 0);
+                //var o = GameObject.Find("_UI");  // objects in this ui have coordinates in absolute pixels relative to the screen center, where the y axis goes from top to bottom
+                //int indent = 0;
+                //dbg.PrintGameObjectHierarchUp(o, out indent);
+                //dbg.Out("/////////////////////////////////////////////////////////", 0);
+                //dbg.PrintGameObjectHierarchy(o, indent);
+                //dbg.Out("---------------------------------------------------------", 0);
+                ////var fonts = FindObjectsOfType(typeof(Font)) as Font[];
                 //foreach (Font font in fonts)
                 //    dbg.Out(font.name, 1);
                 //dbg.Out("---------------------------------------------------------", 0);
-                var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
-                f.Write(dbg.ToString());
-                f.Close();
+                dbg.Out("----- vessel.mainBody: ----", 0);
+                var vessel = FlightGlobals.ActiveVessel;
+                dbg.PrintHierarchy(vessel.mainBody, 0, false);
+                dbg.Out("----- vessel : ----", 0);
+                dbg.PrintHierarchy(vessel, 0, false);
+                DMDebug.Log(dbg.ToString());
+                //var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
+                //f.Write(dbg.ToString());
+                //f.Close();
             }
 #endif
         }
@@ -1533,45 +1495,80 @@ namespace KerbalFlightData
 
             leftArea = KFDArea.Create("left", new Vector2(GuiInfo.instance.screenAnchorLeft, 0f), TextAlignment.Right, null);
             rightArea = KFDArea.Create("right", new Vector2(GuiInfo.instance.screenAnchorRight, 0f), TextAlignment.Left, null);
-            texts = new KFDText[TxtIdx.COUNT];
+            texts = new KFDText[(int)TxtIdx.COUNT];
 
             double tmpMach = -1;
-            texts[TxtIdx.MACH] = KFDText.Create("mach", MyStyleId.Emph,
+            texts[(int)TxtIdx.MACH] = KFDText.Create("mach", MyStyleId.Emph,
                 (Data d) => new KFDContent("Mach " + d.machNumber.ToString("F2"), MyStyleId.Emph),
                 (Data d) => SetIf(ref tmpMach, d.machNumber, !Util.AlmostEqual(d.machNumber, tmpMach, 0.01)));
 
-            double tmpAir = -1;
-            texts[TxtIdx.AIR] = KFDText.Create("air", MyStyleId.Greyed,
-                (Data d) => new KFDContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
-                (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
+            //double tmpAir = -1;
+            //texts[TxtIdx.AIR] = KFDText.Create("air", MyStyleId.Greyed,
+            //    (Data d) => new KFDContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
+            //    (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
 
             double tmpEngPerf = -1;
             double tmpThrottle = -1;
-            texts[TxtIdx.ENGINEPERF] = KFDText.Create("eng", MyStyleId.Greyed,
+            texts[(int)TxtIdx.ENGINEPERF] = KFDText.Create("eng", MyStyleId.Greyed,
                 (Data d) => new KFDContent(String.Format("Thr. {0} kN ({1}%)", d.totalThrust.ToString("F0"), (100*d.throttle).ToString("F0")), MyStyleId.Greyed), 
                 (Data d) => SetIf(ref tmpEngPerf, ref tmpThrottle, d.totalThrust, d.throttle, !(Util.AlmostEqual(d.totalThrust, tmpEngPerf, 0.5) && Util.AlmostEqual(d.throttle, tmpThrottle, 0.005))));
 
             int tmpStall = -1;
-            texts[TxtIdx.STALL] = KFDText.Create("stall", MyStyleId.Greyed,
+            texts[(int)TxtIdx.STALL] = KFDText.Create("stall", MyStyleId.Greyed,
                 (Data d) => new KFDContent("Stall", d.warnStall),
                 (Data d) => SetIf(ref tmpStall, d.warnStall, d.warnStall != tmpStall));
 
             double tmpQ = -1;
-            texts[TxtIdx.Q] = KFDText.Create("q", MyStyleId.Greyed,
+            texts[(int)TxtIdx.Q] = KFDText.Create("q", MyStyleId.Greyed,
                 (Data d) => new KFDContent("Q  " + GuiInfo.FormatPressure(d.q), d.warnQ),
                 (Data d) => SetIf(ref tmpQ, d.q, !Util.AlmostEqualRel(d.q, tmpQ, 0.01)));
 
             double tmpTemp = -1;
             int    tmpWarnTemp = -1;
-            texts[TxtIdx.TEMP] = KFDText.Create("temp", MyStyleId.Greyed,
-                (Data d) => new KFDContent("T " + d.highestTemp.ToString("F0") + " °C", d.warnTemp),
+            texts[(int)TxtIdx.TEMP] = KFDText.Create("temp", MyStyleId.Greyed,
+                (Data d) => new KFDContent("T " + d.highestTemp.ToString("F0") + " K", d.warnTemp),
                 (Data d) => SetIf(ref tmpTemp, ref tmpWarnTemp, d.highestTemp, d.warnTemp, !Util.AlmostEqual(d.highestTemp, tmpTemp, 1) || d.warnTemp != tmpWarnTemp));
 
-            double tmpAlt = -1;
-            texts[TxtIdx.ALT] = KFDText.Create("alt", MyStyleId.Emph,
-                (Data d) => new KFDContent("Alt " + (d.radarAltitude < 5000 ? (GuiInfo.FormatRadarAltitude(d.radarAltitude) + " R") : GuiInfo.FormatAltitude(d.altitude)), d.radarAltitude < 200 ? MyStyleId.Warn1 : MyStyleId.Emph),
-                (Data d) => SetIf(ref tmpAlt, d.altitude, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001)));
+            Func<Data, KFDContent> fmtAltitude = (Data d) =>
+            {
+                int sym;
+                double absvs = Math.Abs(data.verticalSpeed);
+                if (absvs > 10.0)
+                    if (absvs > 100)
+                        sym = 3;
+                    else
+                        sym = 2;
+                else
+                    if (absvs > 5.0)
+                        sym = 1;
+                    else
+                        sym = 0;
+                if (data.verticalSpeed < 0)
+                    sym += 4;
+                string s = verticalSpeedSymbols[sym];
+                string label;
+                if (d.radarAltitude < 5000)
+                    label = string.Format("Alt {0} R  {1}", GuiInfo.FormatRadarAltitude(d.radarAltitude), s);
+                else if (d.isInAtmosphere)
+                    label = string.Format("Alt {0} {1}", GuiInfo.FormatRadarAltitude(d.radarAltitude), s);
+                else 
+                    label = "Alt "+GuiInfo.FormatAltitude(d.altitude);
+                
+                int warnlevel = MyStyleId.Emph;
+                if (data.timeToImpact < 5)
+                    warnlevel = MyStyleId.Warn2;
+                else if (data.timeToImpact < 10 || d.radarAltitude < 200.0)
+                    warnlevel = MyStyleId.Warn1;
+                //else if (data.timeToImpact < 20 || d.radarAltitude < 5000)
+                    //warnlevel = MyStyleId.Emph;
+                return new KFDContent(label, warnlevel);
+            };
 
+            double tmpVerticalSpeed = double.PositiveInfinity;
+            double tmpAlt = -1;
+            texts[(int)TxtIdx.ALT] = KFDText.Create("alt", MyStyleId.Emph,
+                fmtAltitude,
+                (Data d) => SetIf(ref tmpAlt, ref tmpVerticalSpeed, d.altitude, d.verticalSpeed, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001) || !Util.AlmostEqualRel(d.verticalSpeed, tmpVerticalSpeed, 0.01)));
 
             Func<Data, KFDContent> fmtTime = (Data d) =>
             {
@@ -1589,34 +1586,34 @@ namespace KerbalFlightData
             };
 
             double tmpTNode = -1;
-            texts[TxtIdx.TNODE] = KFDText.Create("tnode", MyStyleId.Plain,
+            texts[(int)TxtIdx.TNODE] = KFDText.Create("tnode", MyStyleId.Plain,
                 fmtTime,
                 (Data d) => SetIf(ref tmpTNode, d.timeToNode, !Util.AlmostEqual(d.timeToNode, tmpTNode, 1)));
 
             Data.NextNode tmpNextNode1 = Data.NextNode.Maneuver;
             double tmpAp = -1;
-            texts[TxtIdx.AP] = KFDText.Create("ap", MyStyleId.Plain,
+            texts[(int)TxtIdx.AP] = KFDText.Create("ap", MyStyleId.Plain,
                 (Data d) => new KFDContent("Ap " + GuiInfo.FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain),
                 (Data d) => SetIf(ref tmpAp, ref tmpNextNode1, d.apoapsis, d.nextNode, !Util.AlmostEqualRel(d.apoapsis, tmpAp, 0.001) || d.nextNode != tmpNextNode1));
 
             Data.NextNode tmpNextNode2 = Data.NextNode.Maneuver;
             double tmpPe = 0;
-            texts[TxtIdx.PE] = KFDText.Create("pe", MyStyleId.Plain,
+            texts[(int)TxtIdx.PE] = KFDText.Create("pe", MyStyleId.Plain,
                 (Data d) => new KFDContent("Pe " + GuiInfo.FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
                 (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.001) || d.nextNode != tmpNextNode2));
 
-            leftArea.Add(texts[TxtIdx.ALT]);
-            leftArea.Add(texts[TxtIdx.TNODE]);
-            leftArea.Add(texts[TxtIdx.AP]);
-            leftArea.Add(texts[TxtIdx.PE]);
-            rightArea.Add(texts[TxtIdx.MACH]);
-            rightArea.Add(texts[TxtIdx.AIR]);
-            rightArea.Add(texts[TxtIdx.ENGINEPERF]);
-            rightArea.Add(texts[TxtIdx.STALL]);
-            rightArea.Add(texts[TxtIdx.Q]);
-            rightArea.Add(texts[TxtIdx.TEMP]);
+            leftArea.Add(texts[(int)TxtIdx.ALT]);
+            leftArea.Add(texts[(int)TxtIdx.TNODE]);
+            leftArea.Add(texts[(int)TxtIdx.AP]);
+            leftArea.Add(texts[(int)TxtIdx.PE]);
+            rightArea.Add(texts[(int)TxtIdx.MACH]);
+            //rightArea.Add(texts[(int)TxtIdx.AIR]);
+            rightArea.Add(texts[(int)TxtIdx.ENGINEPERF]);
+            rightArea.Add(texts[(int)TxtIdx.STALL]);
+            rightArea.Add(texts[(int)TxtIdx.Q]);
+            rightArea.Add(texts[(int)TxtIdx.TEMP]);
 
-            markers = new int[TxtIdx.COUNT];
+            markers = new int[(int)TxtIdx.COUNT];
         }
 
 
