@@ -241,11 +241,8 @@ public class Data
 
     public double altitude = 0;
     public double radarAltitude = 0;
-    public double verticalSpeed = 0; // 0: < 5 ms, 1: < 10, 2: < 100,  3 >= 100
-                                        // 0: O
-                                        // 1: +
-                                        // 2: ++
-                                        // 3: +++ or so...
+    public double verticalSpeed = 0;
+    public double radarAltitudeDeriv = 0;
     public double timeToImpact = 0;
 
     public double highestTemp = 0;
@@ -339,7 +336,7 @@ class DataSources
     private static PartResourceLibrary l = PartResourceLibrary.Instance;
     private static bool hasFAR  = false;
     //private static bool hasDre            = false;
-    private static bool hasAJE            = false;
+    //private static bool hasAJE            = false;
 
     private static double airDemand = 0;
     private static double airAvailable = 0;
@@ -373,10 +370,10 @@ class DataSources
             //{
             //    hasDre = true;
             //}
-            else if (assembly.name == "AJE")
-            {
-                hasAJE = true;
-            }
+            //else if (assembly.name == "AJE")
+            //{
+            //    hasAJE = true;
+            //}
         }
     }
 
@@ -504,9 +501,10 @@ class DataSources
         }
 
         data.altitude = vessel.altitude;
-        //data.radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
+        // for data.radarAltitude see FixedUpdate()
+        data.verticalSpeed = vessel.verticalSpeed;
 
-        data.timeToImpact = data.verticalSpeed < 0 ? -data.radarAltitude/data.verticalSpeed : double.PositiveInfinity;
+        data.timeToImpact = data.radarAltitudeDeriv < 0 ? -data.radarAltitude/data.radarAltitudeDeriv : double.PositiveInfinity;
 
         data.isLanded = false;
         if (vessel.LandedOrSplashed)
@@ -649,9 +647,9 @@ class DataSources
         Vessel vessel = FlightGlobals.ActiveVessel;
         double radarAltitude = vessel.altitude - Math.Max(0, vessel.terrainAltitude); // terrainAltitude is the deviation of the terrain from the sea level.
         if (computeDerivsAllowed)
-            data.verticalSpeed = (radarAltitude - data.radarAltitude) / TimeWarp.fixedDeltaTime;
+            data.radarAltitudeDeriv = (radarAltitude - data.radarAltitude) / TimeWarp.fixedDeltaTime;
         else
-            data.verticalSpeed = 0;
+            data.radarAltitudeDeriv = 0;
         data.radarAltitude = radarAltitude;
         //DMDebug.Log(string.Format("vertical speed = {0} (?)", data.verticalSpeed));
     }
@@ -1451,7 +1449,6 @@ class DataSources
                 //dbg.PrintGameObjectHierarchy(InternalSpace.Instance.gameObject, 0);
                 //dbg.Out("---------------------------------------------------------", 0);
                 //InternalSpeed spd = InternalSpeed.FindObjectsOfType<InternalSpeed>().FirstOrDefault();
-                //dbg.Out(spd.textObject.text.text, 0);
                 //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintHierarchy(spd);
                 //dbg.PrintHierarchy(InternalCamera.Instance);
@@ -1466,10 +1463,11 @@ class DataSources
                 //dbg.PrintHierarchy(GameObject.Find("UI camera"));
                 //dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintHierarchy(GameObject.Find("maneuverVector"));
-                //int indent;
-                //dbg.PrintGameObjectHierarchUp(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, out indent);
-                //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom.gameObject, indent);
-                //dbg.Out("---------------------------------------------------------", 0);
+                dbg.Out("---------------------------------------------------------", 0);
+                int indent;
+                dbg.PrintGameObjectHierarchUp(ScreenSafeUI.fetch.centerAnchor.top.gameObject, out indent);
+                dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.centerAnchor.top.gameObject, indent);
+                dbg.Out("---------------------------------------------------------", 0);
                 //dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
                 //dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
                 //dbg.Out("---------------------------------------------------------", 0);
@@ -1486,15 +1484,15 @@ class DataSources
                 //foreach (Font font in fonts)
                 //    dbg.Out(font.name, 1);
                 //dbg.Out("---------------------------------------------------------", 0);
-                dbg.Out("----- vessel.mainBody: ----", 0);
-                var vessel = FlightGlobals.ActiveVessel;
-                dbg.PrintHierarchy(vessel.mainBody, 0, false);
-                dbg.Out("----- vessel : ----", 0);
-                dbg.PrintHierarchy(vessel, 0, false);
-                DMDebug.Log(dbg.ToString());
-                //var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("DMdebugoutput.txt", null);
-                //f.Write(dbg.ToString());
-                //f.Close();
+                //dbg.Out("----- vessel.mainBody: ----", 0);
+                //var vessel = FlightGlobals.ActiveVessel;
+                //dbg.PrintHierarchy(vessel.mainBody, 0, false);
+                //dbg.Out("----- vessel : ----", 0);
+                //dbg.PrintHierarchy(vessel, 0, false);
+                //DMDebug.Log(dbg.ToString());
+                var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("ScreenSafeUI-GameObject.txt", null);
+                f.Write(dbg.ToString());
+                f.Close();
             }
 #endif
         }
@@ -1575,28 +1573,6 @@ class DataSources
 
             Func<Data, KFDContent> fmtAltitude = (Data d) =>
             {
-                //int sym;
-                //double absvs = Math.Abs(data.verticalSpeed);
-                //if (absvs > 10.0)
-                //    if (absvs > 100)
-                //        sym = 3;
-                //    else
-                //        sym = 2;
-                //else
-                //    if (absvs > 5.0)
-                //        sym = 1;
-                //    else
-                //        sym = 0;
-                //if (data.verticalSpeed < 0)
-                //    sym += 4;
-                //string s = verticalSpeedSymbols[sym];
-                //string label;
-                //if (d.radarAltitude < 5000)
-                //    label = string.Format("Alt {0} R  {1}", GuiInfo.FormatRadarAltitude(d.radarAltitude), s);
-                //else if (d.isInAtmosphere)
-                //    label = string.Format("Alt {0} {1}", GuiInfo.FormatRadarAltitude(d.radarAltitude), s);
-                //else 
-                //    label = "Alt "+GuiInfo.FormatAltitude(d.altitude);
                 string label;
                 if (d.radarAltitude < 5000)
                     label = string.Format("Alt {0} R", GuiInfo.FormatRadarAltitude(d.radarAltitude));
@@ -1609,11 +1585,11 @@ class DataSources
                     warnlevel = MyStyleId.Warn1;
                 return new KFDContent(label, warnlevel);
             };
-            double tmpVerticalSpeed = double.PositiveInfinity;
+            double tmRadarAltitudeDeriv = double.PositiveInfinity;
             double tmpAlt = -1;
             texts[(int)TxtIdx.ALT] = KFDText.Create("alt", MyStyleId.Emph,
                 fmtAltitude,
-                (Data d) => SetIf(ref tmpAlt, ref tmpVerticalSpeed, d.altitude, d.verticalSpeed, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001) || !Util.AlmostEqualRel(d.verticalSpeed, tmpVerticalSpeed, 0.01)));
+                (Data d) => SetIf(ref tmpAlt, ref tmRadarAltitudeDeriv, d.altitude, d.radarAltitudeDeriv, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001) || !Util.AlmostEqualRel(d.radarAltitudeDeriv, tmRadarAltitudeDeriv, 0.01)));
 
             Func<Data, KFDContent> fmtTime = (Data d) =>
             {
