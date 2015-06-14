@@ -16,6 +16,7 @@
 */
 using System;
 using System.Text;
+using System.ComponentModel;
 using UnityEngine;
 using System.Reflection;
 using System.Linq;
@@ -200,6 +201,22 @@ namespace KerbalFlightData
         public static bool AlmostEqualRel(double a, double b, double eps)
         {
             return Math.Abs(a-b) <= (Math.Abs(a)+Math.Abs(b))*eps;
+        }
+
+        public static void TryReadValue<T>(ref T target, ConfigNode node, string name)
+        {
+            if (node.HasValue(name))
+            {
+                try
+                {
+                    target = (T)TypeDescriptor.GetConverter(typeof(T)).ConvertFromString(node.GetValue(name));
+                }
+                catch
+                {
+                    // just skip over it
+                }
+            }
+            // skip again
         }
     };
 
@@ -950,6 +967,7 @@ class DataSources
         //const float baselineFontSize = 16; 
         float baseFontSizeIVA = 16; // font size @ "normal" UI scale setting
         float baseFontSizeExternal = 16;
+        float topAnchorOffsetX = 0.0f;
 
         public Camera camera = null;
         public int   fontSize;
@@ -958,20 +976,26 @@ class DataSources
         public float screenAnchorVertical;
         public bool  ready = false;
         public bool  anchorTop = false;
+        public bool  isIVA = false;
+        public bool  isMapMode = false;
 
         public GUIStyle prototypeStyle;
         public GUIStyle[] styles = { null, null, null, null, null };
 
         public void LoadSettings(ConfigNode settings)
         {
-            if (settings.HasValue("baseFontSizeIVA")) baseFontSizeIVA  = float.Parse(settings.GetValue("baseFontSizeIVA"));
-            if (settings.HasValue("baseFontSizeExternal")) baseFontSizeExternal  = float.Parse(settings.GetValue("baseFontSizeExternal"));
+            //if (settings.HasValue("baseFontSizeIVA")) baseFontSizeIVA  = float.Parse(settings.GetValue("baseFontSizeIVA"));
+            //if (settings.HasValue("baseFontSizeExternal")) baseFontSizeExternal  = float.Parse(settings.GetValue("baseFontSizeExternal"));
+            Util.TryReadValue(ref baseFontSizeIVA, settings, "baseFontSizeIVA");
+            Util.TryReadValue(ref baseFontSizeExternal, settings, "baseFontSizeExternal");
+            Util.TryReadValue(ref topAnchorOffsetX, settings, "topAnchorOffsetX");
         }
 
         public void SaveSettings(ConfigNode settings)
         {
             settings.AddValue("baseFontSizeIVA", baseFontSizeIVA);
             settings.AddValue("baseFontSizeExternal", baseFontSizeExternal);
+            settings.AddValue("topAnchorOffsetX", topAnchorOffsetX);
         }
 
         public void Init()
@@ -1051,15 +1075,25 @@ class DataSources
             //DMDebug.Log2("uiScalingFactor = " + uiScalingFactor + "\n" +
             //             "1/aspect = " + (((float)Screen.height) / Screen.width) + "\n" +
             //             "orthoSize = " + camera.orthographicSize);
-            
-            bool isIVA = CameraManager.Instance.currentCameraMode == CameraManager.CameraMode.IVA;
+            isIVA = isMapMode = false;
+            switch (CameraManager.Instance.currentCameraMode)
+            {
+                case CameraManager.CameraMode.Internal:
+                    goto case CameraManager.CameraMode.IVA;
+                case CameraManager.CameraMode.IVA: 
+                    isIVA = true;
+                    break;
+                case CameraManager.CameraMode.Map:
+                    isMapMode = true;
+                    break;
+            }
             if (isIVA)
             {
                 Vector3 p = camera.WorldToViewportPoint(ScreenSafeUI.fetch.centerAnchor.top.transform.position);
                 screenAnchorVertical = p.y - (10f/Screen.height);
                 float offset = 10f/Screen.width;
-                screenAnchorLeft   = p.x - offset;
-                screenAnchorRight  = p.x + offset;
+                screenAnchorLeft   = p.x - offset + topAnchorOffsetX * 0.5f;
+                screenAnchorRight  = p.x + offset + topAnchorOffsetX * 0.5f;
                 anchorTop = true;
                 fontSize = Mathf.RoundToInt(baseFontSizeIVA * uiScalingFactor);
             }
@@ -1089,6 +1123,37 @@ class DataSources
         }
         
         #region GUIUtil
+        // contribution by  Scialytic
+        public static String FormatVerticalSpeed(double x)
+        {
+            double a = Math.Abs(x);
+            if (a >= 1.0e3)
+            {
+                x *= 1.0e-3;
+                a *= 1.0e-3;
+                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km/s";
+            }
+            else
+            {
+                return x.ToString("F0") + " m/s";
+            }
+        }
+
+        // contribution by  Scialytic
+        public static int StyleVerticalSpeed(Data d)
+        {
+            return MyStyleId.Plain;
+            //if ((d.verticalSpeed<-2.0 && d.radarAltitude<50.0) || (d.radarAltitude < -10.0*d.verticalSpeed))
+            //{ 
+            //    if (d.radarAltitude < -5.0 * d.verticalSpeed)
+            //        return MyStyleId.Warn2;
+            //    else
+            //        return MyStyleId.Warn1;
+            //}
+            //else
+            //    return MyStyleId.Emph;
+        }
+
         public static String FormatPressure(double x)
         {
             if (x > 1.0e6)
@@ -1193,6 +1258,7 @@ class DataSources
 
         Data data = new Data();
         bool isRecordingInFixedUpdate = false, lastIsRecordingInFixedUpdate = false;
+        bool isDisplayingRadarAlt = false;
 
         // gui stuff
         KFDText[] texts = null;
@@ -1201,10 +1267,7 @@ class DataSources
         KFDArea leftArea, rightArea;
         enum TxtIdx
         {
-            MACH = 0, AIR, ALT, STALL, Q, TEMP, TNODE, AP, PE, ENGINEPERF, COUNT
-        };
-        static string[] verticalSpeedSymbols = {
-            "", "+", "++", "+++", "", "-", "--", "---"
+            MACH = 0, AIR, ALT, STALL, Q, TEMP, TNODE, AP, PE, ENGINEPERF, VSPEED, COUNT
         };
 
         void Awake() // Awake is called when the script instance is being loaded.
@@ -1331,7 +1394,6 @@ class DataSources
             {
                 return false;
             }
-            
             if (!FlightUIModeController.Instance.navBall.enabled) return false;
 
             return true;
@@ -1425,11 +1487,24 @@ class DataSources
                         markers[(int)TxtIdx.TEMP] = markerMaster;
                     }
                 }
-                markers[(int)TxtIdx.ALT] = markerMaster;
-                if (data.isAtmosphericLowLevelFlight == false)
+
+                if (!data.isLanded)
                 {
-                    markers[(int)TxtIdx.TNODE] = markers[(int)TxtIdx.AP] = markers[(int)TxtIdx.PE] = markerMaster;
+                    isDisplayingRadarAlt = data.radarAltitude < 5000.0;
+                    if (GuiInfo.instance.isMapMode || isDisplayingRadarAlt)
+                    {
+                        markers[(int)TxtIdx.ALT] = markerMaster;
+                    }
+                    if (GuiInfo.instance.isMapMode)
+                    {
+                        markers[(int)TxtIdx.VSPEED] = markerMaster;
+                    }
+                    if (data.isAtmosphericLowLevelFlight == false)
+                    {
+                        markers[(int)TxtIdx.TNODE] = markers[(int)TxtIdx.AP] = markers[(int)TxtIdx.PE] = markerMaster;
+                    }
                 }
+
                 // disable unmarked texts, update marked ones
                 for (int i = 0; i < texts.Length; ++i)
                 {
@@ -1574,7 +1649,7 @@ class DataSources
             Func<Data, KFDContent> fmtAltitude = (Data d) =>
             {
                 string label;
-                if (d.radarAltitude < 5000)
+                if (isDisplayingRadarAlt)
                     label = string.Format("Alt {0} R", GuiInfo.FormatRadarAltitude(d.radarAltitude));
                 else 
                     label = "Alt "+GuiInfo.FormatAltitude(d.altitude);
@@ -1623,6 +1698,12 @@ class DataSources
                 (Data d) => new KFDContent("Pe " + GuiInfo.FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
                 (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.001) || d.nextNode != tmpNextNode2));
 
+            double tmpVertSpeed = -1;
+            texts[(int)TxtIdx.VSPEED] = KFDText.Create("vertspeed", MyStyleId.Emph,
+                (Data d) => new KFDContent("VS " + GuiInfo.FormatVerticalSpeed(d.verticalSpeed), GuiInfo.StyleVerticalSpeed(d)),
+                (Data d) => SetIf(ref tmpVertSpeed, d.verticalSpeed, !Util.AlmostEqualRel(d.verticalSpeed, tmpVertSpeed, 0.001)));
+
+            leftArea.Add(texts[(int)TxtIdx.VSPEED]);
             leftArea.Add(texts[(int)TxtIdx.ALT]);
             leftArea.Add(texts[(int)TxtIdx.TNODE]);
             leftArea.Add(texts[(int)TxtIdx.AP]);
