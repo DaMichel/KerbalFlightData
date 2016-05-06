@@ -31,8 +31,7 @@ namespace KerbalFlightData
     {
 #if DEBUG
         StringBuilder sb = new StringBuilder();
-        //Dictionary visited = new Dictionary<UnityEngine.Object, String>();
-        HashSet<int> visited = new HashSet<int>(); //UnityEngine.Object
+        HashSet<int> visited = new HashSet<int>();
 
         bool CheckAndAddVisited(UnityEngine.Object o)
         {
@@ -63,7 +62,7 @@ namespace KerbalFlightData
             typeof(UnityEngine.Mesh),
             typeof(UnityEngine.Material),
             typeof(UnityEngine.Texture)
-        };
+            };
             foreach (Type t in types)
             {
                 if (t.IsAssignableFrom(typeToCheck)) return true;
@@ -74,16 +73,22 @@ namespace KerbalFlightData
         bool IsOkayToExpand(string name, Type type)
         {
             if (!IsInterestingType(type)) return false;
-            //if (name == "parent" || name == "root" || name == "target") return false;
             return true;
         }
 
         public void PrintGameObjectHierarchy(GameObject o, int indent)
         {
-            Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3") + ", en = " + o.activeSelf.ToString(), indent);
-            //Out("[", indent);
-            foreach (var comp in o.GetComponents<Component>())
+            Out(o.name + ", lp = " + o.transform.localPosition.ToString("F3") + ", p = " + o.transform.position.ToString("F3") + ", s = " + o.transform.localScale.ToString("F1") + ", en = " + o.activeSelf.ToString(), indent);
+            var rt = o.GetComponent<UnityEngine.RectTransform>();
+            if (rt)
             {
+                Out(String.Format(", rtlp = {0}, rtp = {1}, rect = {2}", rt.localPosition.ToString("F3"), rt.position.ToString("F3"), rt.rect.ToString("F2")), indent + o.name.Length);
+            }
+            //Out("[", indent);
+            foreach (var comp in o.GetComponents<UnityEngine.Component>())
+            {
+                if (rt && comp == rt)
+                    continue;
                 Out("<"+comp.GetType().Name+" "+comp.name+">", indent);
             }
             //Out("]", indent);
@@ -118,7 +123,7 @@ namespace KerbalFlightData
                     Out(field.FieldType.Name + " " + field.Name + " = " + value, indent + 1);
                     if (IsOkayToExpand(field.Name, field.FieldType) && recursive)
                     {
-                        PrintHierarchy((UnityEngine.Object)value, indent + 2);
+                        PrintHierarchy((UnityEngine.Object)value, indent + 2, recursive);
                     }
                 }
                 foreach (var prop in t.GetProperties(BindingFlags.Instance | BindingFlags.Public))
@@ -135,16 +140,16 @@ namespace KerbalFlightData
                     Out(prop.PropertyType.Name + " " + prop.Name + " = " + value, indent + 1);
                     if (IsOkayToExpand(prop.Name, prop.PropertyType) && recursive)
                     {
-                        PrintHierarchy((UnityEngine.Object)value, indent + 2);
+                        PrintHierarchy((UnityEngine.Object)value, indent + 2, recursive);
                     }
                 }
 
                 if (typeof(GameObject).IsAssignableFrom(t))
                 {
                     Out("[Components of " + instance.name + " ]", indent + 1);
-                    foreach (var comp in ((GameObject)instance).GetComponents<Component>())
+                    foreach (var comp in ((GameObject)instance).GetComponents<UnityEngine.Component>())
                     {
-                        PrintHierarchy(comp, indent + 2);
+                        PrintHierarchy(comp, indent + 2, recursive);
                     }
                 }
                 Out("}", indent);
@@ -159,6 +164,23 @@ namespace KerbalFlightData
         {
             return sb.ToString();
         }
+
+        public static GameObject GetRoot(GameObject o)
+        {
+            while (o.transform.parent != null)
+            {
+                o = o.transform.parent.gameObject;
+            }
+            return o;
+        }
+
+        public static String ToString(object o)
+        {
+            if (o == null)
+                return "null";
+            return o.ToString();
+        }
+
 #endif
         [System.Diagnostics.Conditional("DEBUG")] // this makes it execute only in debug builds, including argument evaluations. It is very efficient. the compiler will just skip those calls.
         public static void Log2(string s)
@@ -176,7 +198,6 @@ namespace KerbalFlightData
             Debug.LogWarning("KerbalFlightData: " + s);
         }
     }
-
 
 
     public static class Util
@@ -218,6 +239,19 @@ namespace KerbalFlightData
             }
             // skip again
         }
+
+        // point from frame a to the corresponding point in frame b
+        public static Vector2 TransformPoint(Transform a, Transform b, float x, float y)
+        {
+            var p = a.TransformPoint(x, y, 0);
+            p = b.InverseTransformPoint(p);
+            return new Vector2(p.x, p.y);
+        }
+
+        public static Vector2 TransformPoint(Transform a, Transform b, Vector2 p)
+        {
+            return TransformPoint(a, b, p.x, p.y);
+        }
     };
 
     #endregion
@@ -255,6 +289,7 @@ public class Data
     public bool isAtmosphericLowLevelFlight;
     public bool isInAtmosphere;
     public bool isLanded;
+    public bool isDisplayingRadarAlt;
 
     public double altitude = 0;
     public double radarAltitude = 0;
@@ -263,7 +298,9 @@ public class Data
     public double timeToImpact = 0;
 
     public double highestTemp = 0;
+    public double highestTempMax = 0;
     public double tempWarnMetric = 0;
+    public bool   highestTempIsSkinTemp = false;
     public bool hasTemp = false;
 };
 
@@ -361,9 +398,9 @@ class DataSources
     private static bool hasEngine = false;
     private static bool lastPartIsEngine = false;
     private static bool needsTemp = false;
-    private const double tempWarnThreshold1 = 1000.0;
-    private const double tempWarnThreshold2 = 600.0;
-    private const double tempWarnThreshold3 = 300.0;
+    private const double tempWarnThreshold1 = 0.5;
+    private const double tempWarnThreshold2 = 0.2;
+    private const double tempWarnThreshold3 = 0.05;
 
     public static void Init()
     {
@@ -594,10 +631,10 @@ class DataSources
         FillLocationData(data, vessel);
         // temp
         needsTemp = data.isInAtmosphere;
-        data.highestTemp = double.NegativeInfinity;
-        double maxScore = double.NegativeInfinity;
-        double tempWeight  = 0;
-        double averageTempMetric = 0;
+        data.highestTemp = double.PositiveInfinity;
+        double maxScore = double.PositiveInfinity;
+        //double tempWeight  = 0;
+        //double averageTempMetric = 0;
         //  iterate over the vessel parts
         double fixedDeltaTime = TimeWarp.fixedDeltaTime;
         int partCnt = vessel.parts.Count;
@@ -621,14 +658,30 @@ class DataSources
             // do things with parts
             if (p.temperature != 0f && needsTemp) // small gear box has p.temperature==0 - always! Bug? Who knows. Anyway i want to ignore it.
             {
-                double score = p.maxTemp/(Math.Max(0, 1.0 - p.temperature / p.maxTemp) + 1.0e-6) * (1.0 + Math.Max(0.0, p.thermalRadiationFlux + p.thermalConvectionFlux + p.thermalConductionFlux)*p.thermalMassReciprocal*fixedDeltaTime/p.maxTemp);
-                averageTempMetric += score * Math.Max(0, p.maxTemp - p.temperature);
-                tempWeight += score;
-                if (score > maxScore)
+                //double score = p.maxTemp/(Math.Max(0, 1.0 - p.temperature / p.maxTemp) + 1.0e-6) * (1.0 + Math.Max(0.0, p.thermalRadiationFlux + p.thermalConvectionFlux + p.thermalConductionFlux)*p.thermalMassReciprocal*fixedDeltaTime/p.maxTemp);
+                //averageTempMetric += score * Math.Max(0, p.maxTemp - p.temperature);
+                double t = p.temperature;
+                double tskin = p.skinTemperature;
+                double tMax = p.maxTemp > 0 ? p.maxTemp  :  2000.0;
+                double tskinMax = p.skinMaxTemp > 0 ? p.skinMaxTemp : 2000.0;
+                double score = (tMax - t)/tMax;
+                double scoreSkin = (tskinMax - tskin)/tskinMax;
+                //tempWeight += score;
+                if (score < maxScore)
                 {
                     maxScore = score;
-                    data.highestTemp = p.temperature;
-                    data.tempWarnMetric =  p.maxTemp - p.temperature;
+                    data.highestTemp = t;
+                    data.highestTempMax = tMax;
+                    data.tempWarnMetric =  tMax - t;
+                    data.highestTempIsSkinTemp = false;
+                }
+                if (scoreSkin < maxScore)
+                {
+                    maxScore = scoreSkin;
+                    data.highestTemp = tskin;
+                    data.highestTempMax = tskinMax;
+                    data.tempWarnMetric =  tskinMax - tskin;
+                    data.highestTempIsSkinTemp = true;
                 }
                 //DMDebug.Log(string.Format("{0} tmax {1}, t {2}, diff {3}", p.name, p.maxTemp.ToString(), p.temperature.ToString(), (p.maxTemp - p.temperature).ToString()));
             }
@@ -637,14 +690,16 @@ class DataSources
         // air
         //DMDebug.Log(string.Format("air avail: {0}, demand {1}", airAvailable, airDemand));
         data.airAvailability = airAvailable / airDemand;
-       // data.hasAirAvailability = data.isInAtmosphere && !hasAJE;
-       data.hasAirAvailability = false;
+        // data.hasAirAvailability = data.isInAtmosphere && !hasAJE;
+        data.hasAirAvailability = false;
         // engine
         data.throttle = vessel.ctrlState.mainThrottle;
         data.hasEnginePerf = hasEngine;
-
-        // temp
-       data.hasTemp = needsTemp && data.tempWarnMetric < tempWarnThreshold1;
+        
+        // temperature
+        data.tempWarnMetric = data.tempWarnMetric / data.highestTempMax;
+        data.hasTemp = needsTemp && data.tempWarnMetric < tempWarnThreshold1;
+        //DMDebug.Log(string.Format("tempWarnMetric = {0}, hasTemp = {1}", data.tempWarnMetric.ToString("F3"), data.hasTemp.ToString()));
 
         if (hasFAR)
             DataFAR.GetFARData(data, vessel);
@@ -668,6 +723,7 @@ class DataSources
         else
             data.radarAltitudeDeriv = 0;
         data.radarAltitude = radarAltitude;
+        data.isDisplayingRadarAlt = data.radarAltitude < 5000.0;
         //DMDebug.Log(string.Format("vertical speed = {0} (?)", data.verticalSpeed));
     }
 };
@@ -675,1073 +731,1057 @@ class DataSources
 
 #endregion
 
-    #region GUI classes
+#region GUI classes
 
-    public static class MyStyleId
+public static class MyStyleId
+{
+    public const int Plain = 0;
+    public const int Greyed = 1;
+    public const int Warn1 = 2;
+    public const int Warn2 = 3;
+    public const int Emph = 4;
+};
+
+public struct KfiTextStyle
+{
+    public Color color;
+    public FontStyle fontStyle;
+    public static KfiTextStyle plainWhite
     {
-        public const int Plain = 0;
-        public const int Greyed = 1;
-        public const int Warn1 = 2;
-        public const int Warn2 = 3;
-        public const int Emph = 4;
-    };
-
-
-    public struct KFDContent
-    {
-        public KFDContent(string text_, int styleId_)
-        {
-            this.text = text_;
-            this.styleId = styleId_;
+        get { 
+            KfiTextStyle s;
+            s.color =  Color.white;
+            s.fontStyle = FontStyle.Normal;
+            return s;
         }
-        public readonly string text;
-        public readonly int styleId;
-    };
+    }
+};
 
-
-    /* this scripts manages a piece of text. It allocates the main text plus some clones for shadowing. 
-     * The clones get a dark color and are drawn behind the main text with a slight offset */
-    public class KFDText : MonoBehaviour
+public struct KFDContent
+{
+    public KFDContent(string text_, int styleId_)
     {
-        // GUITexts are positioned in viewport space [0,1]^2
-        GUIText    gt1_; 
-        GUIText    gt2_; // child of gt1_
-        GUIText    gt3_; // child of gt1_
-        int        styleId_ = -1;
-        Rect       screenRect_;
-        int change_ = 0, last_change_checked_ = -1; // with this i check if the screen space rect must be recomputed
-        Func<Data, KFDContent> getContent_;
-        Func<Data, bool> hasChanged_;
+        this.text = text_;
+        this.styleId = styleId_;
+    }
+    public readonly string text;
+    public readonly int styleId;
+};
 
-        public static KFDText Create(string id, int styleId, Func<Data, KFDContent> getContent, Func<Data, bool> hasChanged)
-        {
-            // foreground text
-            GameObject textGO = new GameObject("KFD-" + id);
-            textGO.layer = 12; // navball layer
+/* On how to create GUI by script: http://answers.unity3d.com/questions/849176/how-to-create-a-canvas-and-text-ui-46-object-using.html */
+public class KFDText : MonoBehaviour
+{
+    UnityEngine.UI.Text    gt1_; 
+    int        styleId_ = -1;
+    Func<Data, KFDContent> getContent_;
+    Func<Data, bool> hasChanged_;
 
-            KFDText kfi = textGO.AddComponent<KFDText>();
-            
-            kfi.gt1_ = textGO.AddComponent<GUIText>();
-            kfi.gt1_.anchor = TextAnchor.LowerLeft;
-            kfi.gt1_.alignment = TextAlignment.Left;
+    public static KFDText Create(string id, int styleId, Func<Data, KFDContent> getContent, Func<Data, bool> hasChanged)
+    {
+        // foreground text
+        GameObject textGO = new GameObject("KFD-" + id);
+        textGO.layer = 12; // navball layer
+        KFDText kfi = textGO.AddComponent<KFDText>();
+        kfi.gt1_ = textGO.AddComponent<UnityEngine.UI.Text>();
+        var shadow = textGO.AddComponent<UnityEngine.UI.Shadow>();
+        shadow.effectColor = new Color(0, 0, 0, 0.5f);
+        shadow.effectDistance = new Vector2(1.0f, -2.0f);
+        var shadow2 = textGO.AddComponent<UnityEngine.UI.Shadow>();
+        shadow2.effectColor = Color.black;
+        shadow2.effectDistance = new Vector2(0.5f, -1.0f);
 
-            // background shadow 1
-            GameObject shadowGO = new GameObject("KFD-SH-" + id);            
-            shadowGO.layer = 12;
-            shadowGO.transform.parent = textGO.transform;
-            shadowGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
+        kfi.ForceUpdateStyles(styleId);
 
-            kfi.gt2_ = shadowGO.AddComponent<GUIText>();
-            kfi.gt2_.anchor = TextAnchor.LowerLeft;
-            kfi.gt2_.alignment = TextAlignment.Left;
+        kfi.getContent_ = getContent;
+        kfi.hasChanged_ = hasChanged;
 
-            // background shadow 2
-            shadowGO = new GameObject("KFD-SH2-" + id);
-            shadowGO.layer = 12;
-            shadowGO.transform.parent = textGO.transform;
-            shadowGO.transform.localPosition = new Vector3(0f, 0f, -0.1f);
-
-            kfi.gt3_ = shadowGO.AddComponent<GUIText>();
-            kfi.gt3_.anchor = TextAnchor.LowerLeft;
-            kfi.gt3_.alignment = TextAlignment.Left;
-
-            kfi.getContent_ = getContent;
-            kfi.hasChanged_ = hasChanged;
-
-            return kfi;
-        }
+        return kfi;
+    }
         
+    private void ForceUpdateStyles(int styleId)
+    {
+        this.styleId_ = styleId;
+        KfiTextStyle s = KFDGuiController.instance.styles[styleId];
+        this.gt1_.fontStyle = s.fontStyle;
+        this.gt1_.fontSize  = KFDGuiController.instance.fontSize;
+        this.gt1_.font      = KFDGuiController.instance.font;
+        this.gt1_.color = s.color;
+    }
 
-        public void UpdateText(Data data)
+    public void UpdateText(Data data)
+    {
+        if (hasChanged_(data))
         {
-            if (hasChanged_(data))
+            //DMDebug.Log2(name + " has changed");
+            KFDContent c = getContent_(data);
+
+            if (this.styleId_ != c.styleId)  // careful because of potentially costly update
             {
-                //DMDebug.Log2(name + " has changed");
-                KFDContent c = getContent_(data);
-
-                if (this.styleId_ != c.styleId)  // careful because of potentially costly update
-                {
-                    this.styleId_ = c.styleId;
-                    GUIStyle s = GuiInfo.instance.styles[c.styleId];
-                    this.gt1_.fontStyle = s.fontStyle;
-                    this.gt1_.fontSize = GuiInfo.instance.fontSize;
-                    this.gt1_.font = s.font;
-                    this.gt1_.material.color = s.active.textColor;
-
-                    this.gt2_.fontStyle = s.fontStyle;
-                    this.gt2_.fontSize = GuiInfo.instance.fontSize;
-                    this.gt2_.font = s.font;
-                    this.gt2_.material.color = XKCDColors.DarkGrey;
-                    this.gt2_.pixelOffset = new Vector2(0f, -1f);
-
-                    this.gt3_.fontStyle = s.fontStyle;
-                    this.gt3_.fontSize = GuiInfo.instance.fontSize;
-                    this.gt3_.font = s.font;
-                    this.gt3_.material.color = XKCDColors.DarkGrey;
-                    this.gt3_.pixelOffset = new Vector2(1f, -1f);
-                }                
-                // not going to compare here
-                this.gt1_.text = c.text;
-                this.gt2_.text = c.text;
-                this.gt3_.text = c.text;
-                ++change_;
+                ForceUpdateStyles(c.styleId);
             }
-            //else
-                //DMDebug.Log2(name + " unchanged");
+            // Not going to compare here, since probably the text has actually changed.
+            this.gt1_.text = c.text;
         }
+        //else
+            //DMDebug.Log2(name + " unchanged");
+    }
 
 
-        public void OnDestroy()
+    public void OnDestroy()
+    {
+        DMDebug.Log2(this.name + " OnDestroy");
+        // release links to make it easier for the gc
+        gt1_ = null;
+        hasChanged_ = null;
+        getContent_ = null;
+    }
+
+    public int fontSize
+    {
+        set
         {
-            DMDebug.Log2(this.name + " OnDestroy");
-            // release links to make it easier for the gc
-            gt1_ = null;
-            gt2_ = null;
-            gt3_ = null;
-            hasChanged_ = null;
-            getContent_ = null;
+            this.gt1_.fontSize = value;
         }
+    }
 
-        public int fontSize
-        {
-            set
+    public bool enableGameObject
+    {
+        set 
+        { 
+            if (this.gameObject.activeSelf != value) 
             {
-                this.gt1_.fontSize = GuiInfo.instance.fontSize;
-                this.gt2_.fontSize = GuiInfo.instance.fontSize;
-                this.gt3_.fontSize = GuiInfo.instance.fontSize;
-                ++change_;
-            }
-            get 
-            {
-                return this.gt1_.fontSize;
+                DMDebug.Log2(this.name + " enabled=" + value);
+                this.gameObject.SetActive(value);
             }
         }
-
-        public Vector3 localPosition
-        {
-            set
-            {
-                this.gameObject.transform.localPosition = value;
-            }
-        }
-
-        public Rect screenRect // in viewport space
-        {
-            get
-            {
-                if (change_ != last_change_checked_)
-                {
-                    Rect r = this.gt1_.GetScreenRect(); // this gives us the coordinates in screen space, based on pixels
-                    Camera c = GuiInfo.instance.camera;
-                    Vector2 p0 = c.ScreenToViewportPoint(r.min); 
-                    Vector2 p1 = c.ScreenToViewportPoint(r.max);
-                    screenRect_ = new Rect(p0.x, p1.y, p1.x - p0.x, p1.y - p0.y);
-                    last_change_checked_ = change_;
-                }
-                return screenRect_;
-            }
-        }
-
-        public bool enableGameObject
-        {
-            set 
-            { 
-                if (this.gameObject.activeSelf != value) 
-                {
-                    DMDebug.Log2(this.name + " enabled=" + value);
-                    this.gameObject.SetActive(value);
-                }
-            }
-            get { return this.gameObject.activeSelf; }
-        }
-    };
+        get { return this.gameObject.activeSelf; }
+    }
+};
 
     
-    public enum VerticalAlignment 
+public enum VerticalAlignment 
+{
+    Top = 1,
+    Bottom = -1
+};
+
+
+/* This class represents the left/right text areas. Texts are managed as children (by Unity GameObjects).
+    * Since Unity 5 we can use the new UI systems which provides automatic layouting controller such as
+    * VerticalLayoutGroup. The latter takes care of the arrangement of texts.
+    * */
+public class KFDArea : MonoBehaviour
+{
+    public List<KFDText> items;
+
+    public static KFDArea Create(string id, Vector2 position_, TextAlignment alignment_, Transform parent) // factory, creates game object with attached FKIArea
     {
-        Top = 1,
-        Bottom = -1
-    };
-
-
-    /* This class represents the left/right text areas. Texts are managed as children (by Unity GameObjects).
-     * The point is to have the area auto-expand the contain one text per row in the vertical and 
-     * to auto-expand in width and to align the text */
-    public class KFDArea : MonoBehaviour
-    {
-        public TextAlignment alignment;
-        public VerticalAlignment verticalAlignment = VerticalAlignment.Bottom;
-        public List<KFDText> items;
-        float maximalWidth = 0f;
-
-        /* note: alignment is actually the alignment of the area. e.g. right-alignment means that the anchor point
-         * is at the right bottom(!) corner. The text inside is always left-aligned*/
-        public static KFDArea Create(string id, Vector2 position_, TextAlignment alignment_, Transform parent) // factory, creates game object with attached FKIArea
+        GameObject go = new GameObject("KFD-AREA-"+id);
+        KFDArea kfi = go.AddComponent<KFDArea>();
+        var layout = go.AddComponent<UnityEngine.UI.VerticalLayoutGroup>();
+        layout.childForceExpandHeight = false;
+        layout.childForceExpandWidth = false;
+        var fitter = go.AddComponent<UnityEngine.UI.ContentSizeFitter>();
+        fitter.horizontalFit = UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize;
+        fitter.verticalFit = UnityEngine.UI.ContentSizeFitter.FitMode.PreferredSize;
+        var recttrafo = go.GetComponent<UnityEngine.RectTransform>();
+        if (alignment_ == TextAlignment.Left)
         {
-            GameObject go = new GameObject("KFD-AREA-"+id);
-            KFDArea kfi = go.AddComponent<KFDArea>();
-            kfi.alignment = alignment_;
-            kfi.useGUILayout = false;
-            kfi.items = new List<KFDText>();
-            go.transform.parent = parent;
-            go.transform.localPosition = position_;
-            return kfi;
+            recttrafo.pivot = new Vector2(0, 0);
+            layout.childAlignment = TextAnchor.LowerLeft;
         }
-
-        public void UpdateLayout() // called from the KerbalFlightData script
+        else if (alignment_ == TextAlignment.Right)
         {
-            //DMDebug.Log2(this.name + " LateUpdate");
-            float w = maximalWidth, h = 0;
-            foreach (KFDText t in items)
-            {
-                if (!t || !t.enableGameObject) continue;
-                Rect r = t.screenRect;
-                w = Mathf.Max(w, r.width);
-                h += r.height;
-            }
-            Vector2 p = Vector2.zero; // the current position of the child texts
-            if (alignment == TextAlignment.Right) p.x -= w;
-            if (verticalAlignment == VerticalAlignment.Bottom)
-                p.y += h;
-            foreach (KFDText t in items)
-            {
-                if (!t || !t.enableGameObject) continue;
-                p.y -= t.screenRect.height;
-                t.localPosition = p;
-            }
-            maximalWidth = w;
+            recttrafo.pivot = new Vector2(1, 0);
+            layout.childAlignment = TextAnchor.LowerRight;
         }
-
-        public void ResetLayout() // when ui size changes
-        {
-            maximalWidth = 0;
-        }
-
-        void OnDestroy()
-        {
-            DMDebug.Log2(this.name + " OnDestroy");
-            items.Clear();
-        }
-
-        public void Add(KFDText t)
-        {
-            t.gameObject.transform.parent = this.gameObject.transform;
-            t.localPosition = Vector3.zero;
-            items.Add(t);
-        }
-
-        public bool enableGameObject
-        {
-            set 
-            { 
-                if (this.gameObject.activeSelf != value) 
-                {
-                    DMDebug.Log2(this.name + " enabled=" + value);
-                    this.gameObject.SetActive(value); 
-                }
-            }
-            get { return this.gameObject.activeSelf; }
-        }
-    };
-
-
-
-
-    /* this class contains information for styling and positioning the texts */
-    public class GuiInfo
-    {
-        static GuiInfo instance_ = new GuiInfo(); // allocate when the code loads
-
-        NavBallBurnVector burnVector_ = null;
-        GameObject navballGameObject = null;
-        VesselAutopilotUI vesselAutopilotUI = null;
-        float uiScalingFactor;
-
-        int timeSecondsPerDay;
-        int timeSecondsPerYear;
-
-        const float navballWidth = 0.072f;
-        const float navballGaugeWidth = 0.030f;
-        const float navballGaugeWidthNonscaling = 0.030f;
-        const float autopilotButtonPanelWidth = 65.0f/1920.0f;
-        //const float baselineFontSize = 16; 
-        float baseFontSizeIVA = 16; // font size @ "normal" UI scale setting
-        float baseFontSizeExternal = 16;
-        float topAnchorOffsetX = 0.0f;
-
-        public Camera camera = null;
-        public int   fontSize;
-        public float screenAnchorRight;
-        public float screenAnchorLeft;
-        public float screenAnchorVertical;
-        public bool  ready = false;
-        public bool  anchorTop = false;
-        public bool  isIVA = false;
-        public bool  isMapMode = false;
-
-        public GUIStyle prototypeStyle;
-        public GUIStyle[] styles = { null, null, null, null, null };
-
-        public void LoadSettings(ConfigNode settings)
-        {
-            //if (settings.HasValue("baseFontSizeIVA")) baseFontSizeIVA  = float.Parse(settings.GetValue("baseFontSizeIVA"));
-            //if (settings.HasValue("baseFontSizeExternal")) baseFontSizeExternal  = float.Parse(settings.GetValue("baseFontSizeExternal"));
-            Util.TryReadValue(ref baseFontSizeIVA, settings, "baseFontSizeIVA");
-            Util.TryReadValue(ref baseFontSizeExternal, settings, "baseFontSizeExternal");
-            Util.TryReadValue(ref topAnchorOffsetX, settings, "topAnchorOffsetX");
-        }
-
-        public void SaveSettings(ConfigNode settings)
-        {
-            settings.AddValue("baseFontSizeIVA", baseFontSizeIVA);
-            settings.AddValue("baseFontSizeExternal", baseFontSizeExternal);
-            settings.AddValue("topAnchorOffsetX", topAnchorOffsetX);
-        }
-
-        public void Init()
-        {
-            if (GameSettings.KERBIN_TIME)
-            {
-                CelestialBody b = FlightGlobals.Bodies.Find((b_) => b_.name == "Kerbin");
-                timeSecondsPerDay = (int)b.rotationPeriod;
-                timeSecondsPerYear = (int)b.orbit.period;
-                // when this fails an exception should be visible in the debug log and 
-                // the time to the next node display should show NaNs and Infs so it should
-                // be pretty clear when something goes wrong at this place
-            }
-            else
-            {
-                timeSecondsPerDay = 24 * 3600;
-                timeSecondsPerYear = timeSecondsPerDay * 365;
-            }
-
-            GameObject go = GameObject.Find("speedText");
-            prototypeStyle = go.GetComponent<ScreenSafeGUIText>().textStyle;
-
-            // GUI functions must only be called in OnGUI ... but ... you can apparently still clone styles ...
-            var s = new GUIStyle(prototypeStyle);
-            s.SetColor(Color.white);
-            s.padding = new RectOffset(0, 0, 0, 1);
-            s.margin = new RectOffset(0, 0, 0, 0);
-            s.fontSize = Mathf.RoundToInt(baseFontSizeExternal * uiScalingFactor);
-            s.wordWrap = false;
-
-            styles[MyStyleId.Plain] = s;
-            styles[MyStyleId.Emph] = new GUIStyle(s);
-            styles[MyStyleId.Emph].fontStyle = FontStyle.Bold;
-            s = new GUIStyle(s);
-            s.SetColor(XKCDColors.Grey);
-            styles[MyStyleId.Greyed] = s;
-            s = new GUIStyle(s);
-            s.SetColor(Color.yellow);
-            styles[MyStyleId.Warn1] = s;
-            s = new GUIStyle(s);
-            s.SetColor(Color.red);
-            styles[MyStyleId.Warn2] = s;
-            styles[MyStyleId.Warn1].fontStyle = styles[MyStyleId.Warn2].fontStyle = FontStyle.Bold;
-
-            navballGameObject = GameObject.Find("MapCollapse_navball");
-            GameObject maneuverVectorGameObject = GameObject.Find("maneuverVector");
-            burnVector_ = maneuverVectorGameObject.GetComponent<NavBallBurnVector>();
-            camera = ScreenSafeUI.referenceCam;
-            GameObject ui = GameObject.Find("AutopilotModes2");
-            if (ui)
-                vesselAutopilotUI = ui.GetComponent<VesselAutopilotUI>();
-
-            Update();
-
-            ready = true;
-        }
-
-        public void Destroy()
-        {
-            // It's safer to remove all references and not have "dead" objects around. Even more so because the instance is always accessible .
-            burnVector_ = null;
-            navballGameObject = null;
-            camera = null;
-            prototypeStyle = null;
-            for (int i=0; i<styles.Length; ++i) styles[i] = null;
-            ready = false;
-        }
-
-        public void Update()
-        {
-            // how much the fonts and everything must be scaled relative to a
-            // reference GUI size - the normal KSP setting.
-            float anchorScale = ScreenSafeUI.fetch.centerAnchor.bottom.localScale.x;
-            uiScalingFactor = 0.6f / camera.orthographicSize; // 0.6 = orthographicSize for "normal" UI scale setting
-            uiScalingFactor *= ((float)Screen.height)/Screen.width*1920f/1080f;
-            uiScalingFactor *= anchorScale; // scale font with navball
-            //DMDebug.Log2("uiScalingFactor = " + uiScalingFactor + "\n" +
-            //             "1/aspect = " + (((float)Screen.height) / Screen.width) + "\n" +
-            //             "orthoSize = " + camera.orthographicSize);
-            isIVA = isMapMode = false;
-            switch (CameraManager.Instance.currentCameraMode)
-            {
-                case CameraManager.CameraMode.Internal:
-                    goto case CameraManager.CameraMode.IVA;
-                case CameraManager.CameraMode.IVA: 
-                    isIVA = true;
-                    break;
-                case CameraManager.CameraMode.Map:
-                    isMapMode = true;
-                    break;
-            }
-            if (isIVA)
-            {
-                Vector3 p = camera.WorldToViewportPoint(ScreenSafeUI.fetch.centerAnchor.top.transform.position);
-                screenAnchorVertical = p.y - (10f/Screen.height);
-                float offset = 10f/Screen.width;
-                screenAnchorLeft   = p.x - offset + topAnchorOffsetX * 0.5f;
-                screenAnchorRight  = p.x + offset + topAnchorOffsetX * 0.5f;
-                anchorTop = true;
-                fontSize = Mathf.RoundToInt(baseFontSizeIVA * uiScalingFactor);
-            }
-            else
-            {
-                // update the anchor positions and the required font size
-                Vector3 p = camera.WorldToViewportPoint(navballGameObject.transform.position);
-                bool hasGauge = burnVector_.deltaVGauge != null && burnVector_.deltaVGauge.gameObject.activeSelf == true;
-                if (hasGauge)
-                    screenAnchorRight = p.x + navballWidth * uiScalingFactor + navballGaugeWidth * uiScalingFactor + navballGaugeWidthNonscaling;
-                else
-                    screenAnchorRight = p.x + navballWidth * uiScalingFactor;
-                if (vesselAutopilotUI && vesselAutopilotUI.modeButtons[0] && vesselAutopilotUI.modeButtons[0].gameObject.activeSelf)
-                    screenAnchorLeft   = p.x - navballWidth * uiScalingFactor - autopilotButtonPanelWidth;
-                else
-                    screenAnchorLeft   = p.x - navballWidth * uiScalingFactor;
-                screenAnchorVertical = p.y;
-                anchorTop = false;
-                fontSize = Mathf.RoundToInt(baseFontSizeExternal * uiScalingFactor);
-            }
-            
-        }
-
-        public static GuiInfo instance
-        {
-            get { return instance_; }
-        }
-        
-        #region GUIUtil
-        // contribution by  Scialytic
-        public static String FormatVerticalSpeed(double x)
-        {
-            double a = Math.Abs(x);
-            if (a >= 1.0e3)
-            {
-                x *= 1.0e-3;
-                a *= 1.0e-3;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km/s";
-            }
-            else
-            {
-                return x.ToString("F0") + " m/s";
-            }
-        }
-
-        // contribution by  Scialytic
-        public static int StyleVerticalSpeed(Data d)
-        {
-            return MyStyleId.Plain;
-            //if ((d.verticalSpeed<-2.0 && d.radarAltitude<50.0) || (d.radarAltitude < -10.0*d.verticalSpeed))
-            //{ 
-            //    if (d.radarAltitude < -5.0 * d.verticalSpeed)
-            //        return MyStyleId.Warn2;
-            //    else
-            //        return MyStyleId.Warn1;
-            //}
-            //else
-            //    return MyStyleId.Emph;
-        }
-
-        public static String FormatPressure(double x)
-        {
-            if (x > 1.0e6)
-            {
-                x *= 1.0e-6;
-                return x.ToString(x < 10 ? "F1" : "F0") + " MPa";
-            }
-            else
-            {
-                x *= 1.0e-3;
-                return x.ToString(x < 10 ? "F1" : "F0") + " kPa";
-            }
-        }
-
-        public static String FormatAltitude(double x)
-        {
-            double a = Math.Abs(x);
-            if (a >= 1.0e9)
-            {
-                x *= 1.0e-9;
-                a *= 1.0e-9;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Gm";
-            }
-            if (a >= 1.0e6)
-            {
-                x *= 1.0e-6;
-                a *= 1.0e-6;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Mm";
-            }
-            else
-            {
-                x *= 1.0e-3;
-                a *= 1.0e-3;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
-            }
-        }
-
-
-        public static String FormatRadarAltitude(double x)
-        {
-            double a = Math.Abs(x);
-            if (a >= 1.0e3)
-            {
-                x *= 1.0e-3;
-                a *= 1.0e-3;
-                return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
-            }
-            else
-            {
-                return x.ToString("F0") + " m";
-            }
-        }
-
-
-        public static String FormatTime(double x_)
-        {
-            const int MIN = 60;
-            const int H = 3600;
-            int D = instance.timeSecondsPerDay;
-            int Y = instance.timeSecondsPerYear;
-
-            int x = (int)x_;
-            int y, d, m, h, s;
-            y = x / Y;
-            x = x % Y;
-            d = x / D;
-            x = x % D;
-            h = x / H;
-            x = x % H;
-            m = x / MIN;
-            x = x % MIN;
-            s = x;
-            int size = 3;
-            string[] arr = new string[size];
-            int idx = 0;
-            if (y > 0)
-                arr[idx++] = y.ToString() + "y";
-            if (d > 0 || idx > 0)
-                arr[idx++] = d.ToString() + "d";
-            if ((h > 0 || idx > 0) && idx < size)
-                arr[idx++] = h.ToString() + "h";
-            if ((m > 0 || idx > 0) && idx < size)
-                arr[idx++] = m.ToString() + "m";
-            if ((s > 0 || idx > 0) && idx < size)
-                arr[idx++] = s.ToString() + "s";
-            return string.Join(" ", arr, 0, idx);
-        }
-        #endregion
+        kfi.items = new List<KFDText>();
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = position_;
+        return kfi;
     }
 
-    #endregion
-
-
-    [KSPAddon(KSPAddon.Startup.Flight, false)]
-    public class DMFlightData : MonoBehaviour
+    void OnDestroy()
     {
-        double dtSinceLastUpdate;
+        DMDebug.Log2(this.name + " OnDestroy");
+        items.Clear();
+    }
 
-        bool displayUIByGuiEvent = true;
-        bool displayUIByToolbarClick = true;
-        static IButton toolbarButton;
+    public void Add(KFDText t)
+    {
+        t.gameObject.transform.SetParent(this.gameObject.transform, false);
+        items.Add(t);
+    }
 
-        Data data = new Data();
-        bool isRecordingInFixedUpdate = false, lastIsRecordingInFixedUpdate = false;
-        bool isDisplayingRadarAlt = false;
-
-        // gui stuff
-        KFDText[] texts = null;
-        int[] markers = null;
-        int markerMaster = 0;
-        KFDArea leftArea, rightArea;
-        enum TxtIdx
+    public VerticalAlignment verticalAlignment
+    {
+        set 
         {
-            MACH = 0, AIR, ALT, STALL, Q, TEMP, TNODE, AP, PE, ENGINEPERF, VSPEED, COUNT
+            var rt = this.gameObject.GetComponent<UnityEngine.RectTransform>();
+            var layout = this.gameObject.GetComponent<UnityEngine.UI.VerticalLayoutGroup>();
+            var pivot = rt.pivot;
+            if (value == VerticalAlignment.Bottom)
+            {
+                pivot.y = 0;
+            }
+            else
+            {
+                pivot.y = 1;
+            }
+            rt.pivot = pivot;
+        }
+    }
+
+    public bool enableGameObject
+    {
+        set 
+        { 
+            if (this.gameObject.activeSelf != value) 
+            {
+                DMDebug.Log2(this.name + " enabled=" + value);
+                this.gameObject.SetActive(value); 
+            }
+        }
+        get { return this.gameObject.activeSelf; }
+    }
+};
+
+
+
+
+/* this class contains information for styling and positioning of the texts */
+public class KFDGuiController
+{
+    static KFDGuiController instance_ = new KFDGuiController(); // allocate when the code loads
+
+    GameObject goAnchor = null;
+    GameObject goNavball = null;
+    GameObject goAutopilotModes = null;
+    GameObject goDVGauge = null;
+    GameObject goNavballIVACollapse = null;
+
+    int timeSecondsPerDay;
+    int timeSecondsPerYear;
+
+    float baseFontSizeIVA = 16; // font size @ 100% UI scale setting
+    float baseFontSizeExternal = 16;
+    float topAnchorOffsetX = 0.0f;
+
+    public int   fontSize;
+    public float screenAnchorRight;
+    public float screenAnchorLeft;
+    public float screenAnchorVertical;
+    public bool  ready = false;
+    public bool  isIVA = false;
+    public bool  isMapMode = false;
+
+    public UnityEngine.Font font = null;
+    public KfiTextStyle[] styles = null;
+
+    // gui stuff
+    KFDText[] texts = null;
+    int[] markers = null;
+    int markerMaster = 0;
+    KFDArea leftArea, rightArea;
+    enum TxtIdx
+    {
+        MACH = 0, AIR, ALT, STALL, Q, TEMP, TNODE, AP, PE, ENGINEPERF, VSPEED, COUNT
+    };
+
+
+    public void LoadSettings(ConfigNode settings)
+    {
+        Util.TryReadValue(ref baseFontSizeIVA, settings, "baseFontSizeIVA");
+        Util.TryReadValue(ref baseFontSizeExternal, settings, "baseFontSizeExternal");
+        Util.TryReadValue(ref topAnchorOffsetX, settings, "topAnchorOffsetX");
+    }
+
+    public void SaveSettings(ConfigNode settings)
+    {
+        settings.AddValue("baseFontSizeIVA", baseFontSizeIVA);
+        settings.AddValue("baseFontSizeExternal", baseFontSizeExternal);
+        settings.AddValue("topAnchorOffsetX", topAnchorOffsetX);
+    }
+
+    public void Init()
+    {
+        try
+        {
+            var uimaster = KSP.UI.UIMasterController.Instance;
+            GameObject goMaster = uimaster.gameObject;
+            /* Note: The origin of the UI coordinate frame is in the center of the screen, with positive x to the right and positive y up.
+                * Positions are given in units of pixels. */
+            goNavball = goMaster.GetChild("NavBall_OverlayMask");
+            goNavballIVACollapse = goMaster.GetChild("NavballFrame").GetChild("IVAEVACollapseGroup");
+            goAutopilotModes = goMaster.GetChild("AutopilotModes");
+            goDVGauge = goMaster.GetChild("deltaVreadout");
+            goAnchor = goMaster.GetChild("UIModeFrame"); // The origin of its local frame is in the bottom left corner of the screen.
+        }
+        catch (NullReferenceException)
+        {
+            // Suppress silently. The following check will deal with missing refernces.
+        }
+        if (goNavball == null || goNavballIVACollapse == null || goAutopilotModes == null || goDVGauge == null || goAnchor == null)
+        {
+            DMDebug.Log("Not (yet) able to obtain all references to various gui elements");
+            ready = false;
+            return;
+        }
+
+        if (GameSettings.KERBIN_TIME)
+        {
+            CelestialBody b = FlightGlobals.GetHomeBody(); // should point to kerbin
+            timeSecondsPerDay = (int)b.rotationPeriod;
+            timeSecondsPerYear = (int)b.orbit.period;
+            // when this fails an exception should be visible in the debug log and 
+            // the time to the next node display should show NaNs and Infs so it should
+            // be pretty clear when something goes wrong at this place
+        }
+        else
+        {
+            timeSecondsPerDay = 24 * 3600;
+            timeSecondsPerYear = timeSecondsPerDay * 365;
+        }
+
+        styles = new KfiTextStyle[5];
+        var s = KfiTextStyle.plainWhite;
+        styles[MyStyleId.Plain] = s;
+        styles[MyStyleId.Emph] = s;
+        s.color = XKCDColors.Grey;
+        styles[MyStyleId.Greyed] = s;
+        s.color = Color.yellow;
+        styles[MyStyleId.Warn1] = s;
+        s.color = Color.red;
+        styles[MyStyleId.Warn2] = s;
+        styles[MyStyleId.Emph].fontStyle = styles[MyStyleId.Warn1].fontStyle = styles[MyStyleId.Warn2].fontStyle = FontStyle.Bold;
+
+        // Arial.ttf is the default font of Unity 3d which should be always available
+        // on any system. Still have to figure out how to obtain KSP fonts.
+        // See http://docs.unity3d.com/Manual/class-Font.html
+        font = (Font)Resources.GetBuiltinResource(typeof(Font), "Arial.ttf");
+
+        ready = true;
+
+        SetupGUI();
+    }
+
+    public void Destroy()
+    {
+        // fun fact: all my MonoBehaviour derivatives are destroyed automagically
+        texts = null; // texts are actually destroyed by their parents
+        markers = null;
+        if (leftArea) GameObject.Destroy(leftArea.gameObject); // better be safe.
+        if (rightArea) GameObject.Destroy(rightArea.gameObject);
+        leftArea = null;
+        rightArea = null;
+
+        // It's safer to remove all references and not have "dead" objects around. Even more so because the instance is always accessible .
+        goNavball = null;
+        goAutopilotModes = null;
+        goDVGauge = null;
+        goAnchor = null;
+        ready = false;
+    }
+
+    private void UpdateGuiConfigurationData()
+    {
+        float uiScale = KSP.UI.UIMasterController.Instance.uiScale;
+        isIVA = isMapMode = false;
+        switch (CameraManager.Instance.currentCameraMode)
+        {
+            case CameraManager.CameraMode.Internal:
+                goto case CameraManager.CameraMode.IVA;
+            case CameraManager.CameraMode.IVA: 
+                isIVA = true;
+                break;
+            case CameraManager.CameraMode.Map:
+                isMapMode = true;
+                break;
+        }
+        if (isIVA)
+        {
+            fontSize = Mathf.RoundToInt(baseFontSizeIVA * uiScale);
+            var x = Screen.width / uiScale * 0.5f;
+            screenAnchorLeft  = x - baseFontSizeIVA;
+            screenAnchorRight = x + baseFontSizeIVA;
+            screenAnchorVertical = Screen.height / uiScale - 10f;
+        }
+        else
+        {
+            fontSize = Mathf.RoundToInt(baseFontSizeExternal * uiScale);
+            var anchorTrafo = anchorObject.transform;
+            var goAnchorLeft = goNavball;
+            var goAnchorRight = goNavball;
+            var goAnchorVertical = goNavballIVACollapse;
+            if (goAutopilotModes.GetComponent<Canvas>().isActiveAndEnabled)
+            {
+                goAnchorLeft = goAutopilotModes;
+            }
+            if (goDVGauge.activeInHierarchy)
+            {
+                goAnchorRight = goDVGauge;
+            }
+            var pLeft = Util.TransformPoint(goAnchorLeft.transform, anchorObject.transform, goAnchorLeft.GetComponent<RectTransform>().rect.min);
+            var pRight = Util.TransformPoint(goAnchorRight.transform, anchorObject.transform, goAnchorRight.GetComponent<RectTransform>().rect.max);
+            var pVert = Util.TransformPoint(goAnchorVertical.transform, anchorObject.transform, 0f, 11f);
+            screenAnchorLeft = pLeft.x;
+            screenAnchorRight = pRight.x + 5f;
+            screenAnchorVertical = pVert.y;
+        }
+    }
+
+    public void ConfigureGuiElements()
+    {
+        float lastFontSize = this.fontSize;
+        bool  lastIsIVA    = this.isIVA;
+        
+        UpdateGuiConfigurationData();
+
+        // attach areas to the navball basically
+        leftArea.transform.localPosition = new Vector3(screenAnchorLeft, screenAnchorVertical);
+        rightArea.transform.localPosition = new Vector3(screenAnchorRight, screenAnchorVertical);
+        
+        if (lastIsIVA != this.isIVA)
+        {
+            leftArea.verticalAlignment = isIVA ? VerticalAlignment.Top : VerticalAlignment.Bottom;
+            rightArea.verticalAlignment = isIVA ? VerticalAlignment.Top : VerticalAlignment.Bottom;
+        }
+
+        if (lastFontSize != this.fontSize)
+        {
+            foreach (var t in texts)
+                t.fontSize = fontSize;
+        }
+    }
+
+    public void UpdateValues(Data data)
+    {
+        ++markerMaster;
+        if (data.isInAtmosphere && data.hasEnginePerf)
+        {
+            markers[(int)TxtIdx.ENGINEPERF] = markerMaster;
+        }
+        if (data.isInAtmosphere && !data.isLanded)
+        {
+            if (data.hasAerodynamics)
+            {
+                markers[(int)TxtIdx.MACH] = markerMaster;
+                markers[(int)TxtIdx.Q] = markerMaster;
+            }
+            if (data.hasAirAvailability)
+            {
+                markers[(int)TxtIdx.AIR] = markerMaster;
+            }
+            if (data.hasStalls)
+            {
+                markers[(int)TxtIdx.STALL] = markerMaster;
+            }
+            if (data.hasTemp)
+            {
+                markers[(int)TxtIdx.TEMP] = markerMaster;
+            }
+        }
+
+        if (!data.isLanded)
+        {
+            if (KFDGuiController.instance.isMapMode || data.isDisplayingRadarAlt)
+            {
+                markers[(int)TxtIdx.ALT] = markerMaster;
+            }
+            if (KFDGuiController.instance.isMapMode)
+            {
+                markers[(int)TxtIdx.VSPEED] = markerMaster;
+            }
+            if (data.isAtmosphericLowLevelFlight == false)
+            {
+                markers[(int)TxtIdx.TNODE] = markers[(int)TxtIdx.AP] = markers[(int)TxtIdx.PE] = markerMaster;
+            }
+        }
+
+        // disable unmarked texts, update marked ones
+        for (int i = 0; i < texts.Length; ++i)
+        {
+            texts[i].enableGameObject = (markers[i] == markerMaster);
+            if (markers[i] == markerMaster)
+                texts[i].UpdateText(data);
+        }
+    }
+
+    public void ToggleDisplay(bool on)
+    {   
+        // need to check if the areas are still there because on destruction of the scene they might be already gone without knowing
+        if (leftArea) leftArea.enableGameObject = on;
+        if (rightArea) rightArea.enableGameObject = on;                
+    }
+
+    public static KFDGuiController instance
+    {
+        get { return instance_; }
+    }
+
+    private GameObject anchorObject
+    {
+        get { return goAnchor; }
+    }
+
+    private static bool SetIf<T1>(ref T1 dst, T1 src, bool b)
+    {
+        if (b) { dst = src; return true; }
+        else return false;
+    }
+
+    private static bool SetIf<T1, T2>(ref T1 dst1, ref T2 dst2, T1 src1, T2 src2, bool b)
+    {
+        if (b) { 
+            dst1 = src1; 
+            dst2 = src2;
+            return true; 
+        }
+        else return false;
+    }
+
+    private void SetupGUI()
+    {
+        DMDebug.Log2("SetupGUI");
+        leftArea = KFDArea.Create("left", new Vector2(KFDGuiController.instance.screenAnchorLeft, 0f), TextAlignment.Right, null);
+        rightArea = KFDArea.Create("right", new Vector2(KFDGuiController.instance.screenAnchorRight, 0f), TextAlignment.Left, null);
+        leftArea.transform.SetParent(anchorObject.transform, false);
+        rightArea.transform.SetParent(anchorObject.transform, false);
+
+        texts = new KFDText[(int)TxtIdx.COUNT];
+
+        double tmpMach = -1;
+        texts[(int)TxtIdx.MACH] = KFDText.Create("mach", MyStyleId.Emph,
+            (Data d) => new KFDContent("Mach " + d.machNumber.ToString("F2"), MyStyleId.Emph),
+            (Data d) => SetIf(ref tmpMach, d.machNumber, !Util.AlmostEqual(d.machNumber, tmpMach, 0.01)));
+
+        double tmpAir = -1;
+        texts[(int)TxtIdx.AIR] = KFDText.Create("air", MyStyleId.Greyed,
+            (Data d) => new KFDContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
+            (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
+
+        Func<Data, KFDContent> fmtEnginePerf = (Data d) =>
+        {
+            string txt;
+            if (d.hasAirBreathingEngines)
+                txt = String.Format("J {0} kN |{1}%|", d.airBreatherThrust.ToString("F0"), (100*d.throttle).ToString("F0"));
+            else
+                txt = String.Format("R {0} kN |{1}%|", d.totalThrust.ToString("F0"), (100*d.throttle).ToString("F0"));
+            return new KFDContent(txt, MyStyleId.Greyed);
+        };
+        double tmpEngPerf = -1;
+        double tmpThrottle = -1;
+        bool tmpUseAirBreathers = false;
+        Func<Data, bool> hasChangedEnginePerf = (Data d) =>
+        {
+            bool b1 = Util.AlmostEqual(d.totalThrust, tmpEngPerf, 0.5);
+            bool b2 = b1 && Util.AlmostEqual(d.throttle, tmpThrottle, 0.005);
+            bool b3 = b2 && tmpUseAirBreathers == d.hasAirBreathingEngines;
+            return !b3;
+        };
+        texts[(int)TxtIdx.ENGINEPERF] = KFDText.Create("eng", MyStyleId.Greyed,
+            fmtEnginePerf, 
+            hasChangedEnginePerf);
+
+        int tmpStall = -1;
+        texts[(int)TxtIdx.STALL] = KFDText.Create("stall", MyStyleId.Greyed,
+            (Data d) => new KFDContent("Stall", d.warnStall),
+            (Data d) => SetIf(ref tmpStall, d.warnStall, d.warnStall != tmpStall));
+
+        double tmpQ = -1;
+        texts[(int)TxtIdx.Q] = KFDText.Create("q", MyStyleId.Greyed,
+            (Data d) => new KFDContent("Q  " + KFDGuiController.FormatPressure(d.q), d.warnQ),
+            (Data d) => SetIf(ref tmpQ, d.q, !Util.AlmostEqualRel(d.q, tmpQ, 0.01)));
+
+        double tmpTemp = -1;
+        int    tmpWarnTemp = -1;
+        Func<Data, KFDContent> fmtTemperature = (Data d) =>
+        {
+            string isskin = d.highestTempIsSkinTemp ? "(I)" : "";
+            string s = string.Format("T {0} / {1}{2} K", d.highestTemp.ToString("F0"), d.highestTempMax.ToString("F0"), isskin);
+            return new KFDContent(s, d.warnTemp);
+        };
+        texts[(int)TxtIdx.TEMP] = KFDText.Create("temp", MyStyleId.Greyed,
+            fmtTemperature,
+            (Data d) => SetIf(ref tmpTemp, ref tmpWarnTemp, d.highestTemp, d.warnTemp, !Util.AlmostEqual(d.highestTemp, tmpTemp, 1) || d.warnTemp != tmpWarnTemp));
+
+        Func<Data, KFDContent> fmtAltitude = (Data d) =>
+        {
+            string label;
+            if (d.isDisplayingRadarAlt)
+                label = string.Format("Alt {0} R", KFDGuiController.FormatRadarAltitude(d.radarAltitude));
+            else 
+                label = "Alt "+KFDGuiController.FormatAltitude(d.altitude);
+            int warnlevel = MyStyleId.Emph;
+            if (d.timeToImpact < 5)
+                warnlevel = MyStyleId.Warn2;
+            else if (d.timeToImpact < 10 || d.radarAltitude < 200.0)
+                warnlevel = MyStyleId.Warn1;
+            return new KFDContent(label, warnlevel);
+        };
+        double tmRadarAltitudeDeriv = double.PositiveInfinity;
+        double tmpAlt = -1;
+        texts[(int)TxtIdx.ALT] = KFDText.Create("alt", MyStyleId.Emph,
+            fmtAltitude,
+            (Data d) => SetIf(ref tmpAlt, ref tmRadarAltitudeDeriv, d.altitude, d.radarAltitudeDeriv, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001) || !Util.AlmostEqualRel(d.radarAltitudeDeriv, tmRadarAltitudeDeriv, 0.01)));
+
+        Func<Data, KFDContent> fmtTime = (Data d) =>
+        {
+            String timeLabel = "";
+            switch (d.nextNode)
+            {
+                case Data.NextNode.Ap: timeLabel = "Ap"; break;
+                case Data.NextNode.Pe: timeLabel = "Pe"; break;
+                case Data.NextNode.Encounter: timeLabel = "En"; break;
+                case Data.NextNode.Maneuver: timeLabel = "Man"; break;
+                case Data.NextNode.Escape: timeLabel = "Esc"; break;
+            }
+            timeLabel = "T" + timeLabel + " -" + KFDGuiController.FormatTime(d.timeToNode);
+            return new KFDContent(timeLabel, MyStyleId.Plain);
         };
 
-        void Awake() // Awake is called when the script instance is being loaded.
-        {
-            DMDebug.Log2(name + " Awake!");
-            
-            DataSources.Init();
+        double tmpTNode = -1;
+        texts[(int)TxtIdx.TNODE] = KFDText.Create("tnode", MyStyleId.Plain,
+            fmtTime,
+            (Data d) => SetIf(ref tmpTNode, d.timeToNode, !Util.AlmostEqual(d.timeToNode, tmpTNode, 1)));
 
-            if (ToolbarManager.ToolbarAvailable)
-            {
-                toolbarButton = ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
-                toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
-                toolbarButton.ToolTip = "KerbalFlightData On/Off Switch";
-                toolbarButton.Visibility = new GameScenesVisibility(GameScenes.FLIGHT);
-                toolbarButton.Enabled = true;
-                toolbarButton.OnClick += (e) =>
-                {
-                    displayUIByToolbarClick = !displayUIByToolbarClick;
-                    UpdateEnabling();
-                };
-            }
+        Data.NextNode tmpNextNode1 = Data.NextNode.Maneuver;
+        double tmpAp = -1;
+        texts[(int)TxtIdx.AP] = KFDText.Create("ap", MyStyleId.Plain,
+            (Data d) => new KFDContent("Ap " + KFDGuiController.FormatAltitude(d.apoapsis), d.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain),
+            (Data d) => SetIf(ref tmpAp, ref tmpNextNode1, d.apoapsis, d.nextNode, !Util.AlmostEqualRel(d.apoapsis, tmpAp, 0.001) || d.nextNode != tmpNextNode1));
 
-            GameEvents.onHideUI.Add(OnHideUI);
-            GameEvents.onShowUI.Add(OnShowUI);
+        Data.NextNode tmpNextNode2 = Data.NextNode.Maneuver;
+        double tmpPe = 0;
+        texts[(int)TxtIdx.PE] = KFDText.Create("pe", MyStyleId.Plain,
+            (Data d) => new KFDContent("Pe " + KFDGuiController.FormatAltitude(d.periapsis), d.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
+            (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.001) || d.nextNode != tmpNextNode2));
 
-            LoadSettings();
-            UpdateEnabling(); // might start with it disabled
-        }
+        double tmpVertSpeed = -1;
+        texts[(int)TxtIdx.VSPEED] = KFDText.Create("vertspeed", MyStyleId.Emph,
+            (Data d) => new KFDContent("VS " + KFDGuiController.FormatVerticalSpeed(d.verticalSpeed), KFDGuiController.StyleVerticalSpeed(d)),
+            (Data d) => SetIf(ref tmpVertSpeed, d.verticalSpeed, !Util.AlmostEqualRel(d.verticalSpeed, tmpVertSpeed, 0.001)));
 
+        leftArea.Add(texts[(int)TxtIdx.VSPEED]);
+        leftArea.Add(texts[(int)TxtIdx.ALT]);
+        leftArea.Add(texts[(int)TxtIdx.TNODE]);
+        leftArea.Add(texts[(int)TxtIdx.AP]);
+        leftArea.Add(texts[(int)TxtIdx.PE]);
+        rightArea.Add(texts[(int)TxtIdx.MACH]);
+        rightArea.Add(texts[(int)TxtIdx.AIR]);
+        rightArea.Add(texts[(int)TxtIdx.ENGINEPERF]);
+        rightArea.Add(texts[(int)TxtIdx.STALL]);
+        rightArea.Add(texts[(int)TxtIdx.Q]);
+        rightArea.Add(texts[(int)TxtIdx.TEMP]);
 
-        void OnHideUI()
-        {
-            displayUIByGuiEvent = false;
-            UpdateEnabling();
-        }
-
-
-        void OnShowUI()
-        {
-            displayUIByGuiEvent = true;
-            UpdateEnabling();
-        }
-
-
-        void UpdateEnabling()
-        {
-            enabled = displayUIByToolbarClick && displayUIByGuiEvent;
-        }
-
-
-        void SaveSettings()
-        {
-            ConfigNode settings = new ConfigNode();
-            settings.name = "SETTINGS";
-            settings.AddValue("active", displayUIByToolbarClick);
-            GuiInfo.instance.SaveSettings(settings);
-            settings.Save(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
-        }
-
-
-        void LoadSettings()
-        {
-            ConfigNode settings = new ConfigNode();
-            settings = ConfigNode.Load(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
-            if (settings != null)
-            {
-                if (settings.HasValue("active")) displayUIByToolbarClick = bool.Parse(settings.GetValue("active"));
-                GuiInfo.instance.LoadSettings(settings);
-            }
-        }
-
-
-        void Start() //Start is called on the frame when a script is enabled just before any of the Update methods is called the first time.
-        {
-            DMDebug.Log2(name + " start!");
-        }
-
-
-        void OnEnable() //	This function is called when the object becomes enabled and active.
-        {
-            DMDebug.Log2(name + " enabled!");
-            dtSinceLastUpdate = Double.PositiveInfinity; // full update next time
-        }
-
-
-        void OnDisable() //	This function is called when the behaviour becomes disabled () or inactive.
-        {
-            DMDebug.Log2(name + " disabled!");
-            ToggleDisplay(false); // update won't be called so lets disable the display here
-        }
-
-
-        void OnDestroy() // This function is called when the MonoBehaviour will be destroyed.
-        {
-            DMDebug.Log2(name + " destroyed!");
-            SaveSettings();
-
-            GuiInfo.instance.Destroy();
-            // fun fact: all my MonoBehaviour derivatives are destroyed automagically
-            texts = null; // texts are actually destroyed by their parents
-            markers = null;
-            if (leftArea) GameObject.Destroy(leftArea.gameObject); // better be safe.
-            if (rightArea) GameObject.Destroy(rightArea.gameObject);
-            leftArea = null;
-            rightArea = null;
-
-            // unregister, or else errors occur
-            GameEvents.onHideUI.Remove(OnHideUI);
-            GameEvents.onShowUI.Remove(OnShowUI);
-
-            if (toolbarButton != null)
-                toolbarButton.Destroy();
-        }
-
-
-        bool CheckShouldDisplayBeOn()
-        {
-            if (!FlightGlobals.ready) return false;
-
-            Vessel vessel = FlightGlobals.ActiveVessel;
-            if (vessel == null) return false;
-
-            if (vessel.isEVA || vessel.state == Vessel.State.DEAD)
-            {
-                return false;
-            }
-            if (!FlightUIModeController.Instance.navBall.enabled) return false;
-
-            return true;
-        }
-
-
-        bool CheckFullUpdateTimer()
-        {
-            if (dtSinceLastUpdate > 0.1) // update every so and so fraction of a second
-            {
-                dtSinceLastUpdate = 0;
-                return true;
-            }
-            else return false;
-        }
-
-
-        void ToggleDisplay(bool on)
-        {   
-            // need to check if the areas are still there because on destruction of the scene they might be already gone without knowing
-            if (leftArea) leftArea.enableGameObject = on;
-            if (rightArea) rightArea.enableGameObject = on;                
-        }
-
-        void FixedUpdate()
-        {
-            if (isRecordingInFixedUpdate) 
-                DataSources.FixedUpdate(data, lastIsRecordingInFixedUpdate);
-            lastIsRecordingInFixedUpdate = isRecordingInFixedUpdate;
-        }
-
-        void LateUpdate()
-        {
-            dtSinceLastUpdate += Time.unscaledDeltaTime;
-            
-            if (!GuiInfo.instance.ready)
-                SetupGUI();
-            bool on = CheckShouldDisplayBeOn();
-            ToggleDisplay(on);
-
-            if (on) // update text fonts and text area positions
-            {
-                GuiInfo guiInfo = GuiInfo.instance;
-                int lastFontSize = guiInfo.fontSize;
-                guiInfo.Update();
-                if (lastFontSize != guiInfo.fontSize)
-                {
-                    foreach (var t in texts)
-                        t.fontSize = guiInfo.fontSize;
-                    leftArea.ResetLayout();
-                    rightArea.ResetLayout();
-                    leftArea.UpdateLayout();
-                    rightArea.UpdateLayout();
-                }
-
-                // attach areas to the navball basically
-                leftArea.transform.localPosition = new Vector2(guiInfo.screenAnchorLeft, guiInfo.screenAnchorVertical);
-                rightArea.transform.localPosition = new Vector2(guiInfo.screenAnchorRight, guiInfo.screenAnchorVertical);
-                leftArea.verticalAlignment = guiInfo.anchorTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
-                rightArea.verticalAlignment = guiInfo.anchorTop ? VerticalAlignment.Top : VerticalAlignment.Bottom;
-
-                isRecordingInFixedUpdate = true;
-            }
-            if (on && CheckFullUpdateTimer())
-            {
-                // obtain data
-                Vessel vessel = FlightGlobals.ActiveVessel;
-                DataSources.FillDataInstance(data, vessel);
-                ++markerMaster;
-                if (data.isInAtmosphere && data.hasEnginePerf)
-                {
-                    markers[(int)TxtIdx.ENGINEPERF] = markerMaster;
-                }
-                if (data.isInAtmosphere && !data.isLanded)
-                {
-                    if (data.hasAerodynamics)
-                    {
-                        markers[(int)TxtIdx.MACH] = markerMaster;
-                        markers[(int)TxtIdx.Q] = markerMaster;
-                    }
-                    if (data.hasAirAvailability)
-                    {
-                        markers[(int)TxtIdx.AIR] = markerMaster;
-                    }
-                    if (data.hasStalls)
-                    {
-                        markers[(int)TxtIdx.STALL] = markerMaster;
-                    }
-                    if (data.hasTemp)
-                    {
-                        markers[(int)TxtIdx.TEMP] = markerMaster;
-                    }
-                }
-
-                if (!data.isLanded)
-                {
-                    isDisplayingRadarAlt = data.radarAltitude < 5000.0;
-                    if (GuiInfo.instance.isMapMode || isDisplayingRadarAlt)
-                    {
-                        markers[(int)TxtIdx.ALT] = markerMaster;
-                    }
-                    if (GuiInfo.instance.isMapMode)
-                    {
-                        markers[(int)TxtIdx.VSPEED] = markerMaster;
-                    }
-                    if (data.isAtmosphericLowLevelFlight == false)
-                    {
-                        markers[(int)TxtIdx.TNODE] = markers[(int)TxtIdx.AP] = markers[(int)TxtIdx.PE] = markerMaster;
-                    }
-                }
-
-                // disable unmarked texts, update marked ones
-                for (int i = 0; i < texts.Length; ++i)
-                {
-                    texts[i].enableGameObject = (markers[i] == markerMaster);
-                    if (markers[i] == markerMaster)
-                        texts[i].UpdateText(data);
-                }
-                leftArea.UpdateLayout();
-                rightArea.UpdateLayout();
-            }
-#if DEBUG
-            if (Input.GetKeyDown(KeyCode.O))
-            {
-                DMDebug dbg = new DMDebug();
-
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintGameObjectHierarchy(InternalSpace.Instance.gameObject, 0);
-                //dbg.Out("---------------------------------------------------------", 0);
-                //InternalSpeed spd = InternalSpeed.FindObjectsOfType<InternalSpeed>().FirstOrDefault();
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintHierarchy(spd);
-                //dbg.PrintHierarchy(InternalCamera.Instance);
-                //dbg.PrintHierarchy(FlightGlobals.ActiveVessel);
-                //dbg.PrintHierarchy(GameObject.Find("collapseExpandButton"));
-                //dbg.PrintHierarchy(ScreenSafeUI.fetch.centerAnchor.bottom);
-                //dbg.PrintHierarchy(GameObject.Find("speedText"));
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintHierarchy(GameObject.Find("KFD-AREA-left"));
-                //dbg.PrintHierarchy(GameObject.Find("KFD-AREA-right"));
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintHierarchy(GameObject.Find("UI camera"));
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintHierarchy(GameObject.Find("maneuverVector"));
-                dbg.Out("---------------------------------------------------------", 0);
-                int indent;
-                dbg.PrintGameObjectHierarchUp(ScreenSafeUI.fetch.centerAnchor.top.gameObject, out indent);
-                dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.centerAnchor.top.gameObject, indent);
-                dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintGameObjectHierarchy(leftArea.gameObject, 0);
-                //dbg.PrintGameObjectHierarchy(rightArea.gameObject, 0);
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.PrintGameObjectHierarchy(ScreenSafeUI.fetch.gameObject, 0);
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.Out("---------------------------------------------------------", 0);
-                //var o = GameObject.Find("_UI");  // objects in this ui have coordinates in absolute pixels relative to the screen center, where the y axis goes from top to bottom
-                //int indent = 0;
-                //dbg.PrintGameObjectHierarchUp(o, out indent);
-                //dbg.Out("/////////////////////////////////////////////////////////", 0);
-                //dbg.PrintGameObjectHierarchy(o, indent);
-                //dbg.Out("---------------------------------------------------------", 0);
-                ////var fonts = FindObjectsOfType(typeof(Font)) as Font[];
-                //foreach (Font font in fonts)
-                //    dbg.Out(font.name, 1);
-                //dbg.Out("---------------------------------------------------------", 0);
-                //dbg.Out("----- vessel.mainBody: ----", 0);
-                //var vessel = FlightGlobals.ActiveVessel;
-                //dbg.PrintHierarchy(vessel.mainBody, 0, false);
-                //dbg.Out("----- vessel : ----", 0);
-                //dbg.PrintHierarchy(vessel, 0, false);
-                //DMDebug.Log(dbg.ToString());
-                var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("ScreenSafeUI-GameObject.txt", null);
-                f.Write(dbg.ToString());
-                f.Close();
-            }
-#endif
-        }
-
-        static bool SetIf<T1>(ref T1 dst, T1 src, bool b)
-        {
-            if (b) { dst = src; return true; }
-            else return false;
-        }
-
-        static bool SetIf<T1, T2>(ref T1 dst1, ref T2 dst2, T1 src1, T2 src2, bool b)
-        {
-            if (b) { 
-                dst1 = src1; 
-                dst2 = src2;
-                return true; 
-            }
-            else return false;
-        }
-
-        void SetupGUI()
-        {
-            DMDebug.Log2("SetupGUI");
-            GuiInfo.instance.Init();
-
-            leftArea = KFDArea.Create("left", new Vector2(GuiInfo.instance.screenAnchorLeft, 0f), TextAlignment.Right, null);
-            rightArea = KFDArea.Create("right", new Vector2(GuiInfo.instance.screenAnchorRight, 0f), TextAlignment.Left, null);
-            texts = new KFDText[(int)TxtIdx.COUNT];
-
-            double tmpMach = -1;
-            texts[(int)TxtIdx.MACH] = KFDText.Create("mach", MyStyleId.Emph,
-                (Data d) => new KFDContent("Mach " + d.machNumber.ToString("F2"), MyStyleId.Emph),
-                (Data d) => SetIf(ref tmpMach, d.machNumber, !Util.AlmostEqual(d.machNumber, tmpMach, 0.01)));
-
-            double tmpAir = -1;
-            texts[(int)TxtIdx.AIR] = KFDText.Create("air", MyStyleId.Greyed,
-                (Data d) => new KFDContent("Intake" + (d.airAvailability < 2 ? "  " + (d.airAvailability * 100d).ToString("F0") + "%" : ""), d.warnAir),
-                (Data d) => SetIf(ref tmpAir, d.airAvailability, (d.airAvailability < 2.1 || tmpAir<2.1) ? !Util.AlmostEqual(d.airAvailability, tmpAir, 0.01) : false));
-
-            Func<Data, KFDContent> fmtEnginePerf = (Data d) =>
-            {
-                string txt;
-                if (d.hasAirBreathingEngines)
-                    txt = String.Format("J {0} kN |{1}%|", d.airBreatherThrust.ToString("F0"), (100*d.throttle).ToString("F0"));
-                else
-                    txt = String.Format("R {0} kN |{1}%|", d.totalThrust.ToString("F0"), (100*d.throttle).ToString("F0"));
-                return new KFDContent(txt, MyStyleId.Greyed);
-            };
-            double tmpEngPerf = -1;
-            double tmpThrottle = -1;
-            bool tmpUseAirBreathers = false;
-            Func<Data, bool> hasChangedEnginePerf = (Data d) =>
-            {
-                bool b1 = Util.AlmostEqual(d.totalThrust, tmpEngPerf, 0.5);
-                bool b2 = b1 && Util.AlmostEqual(d.throttle, tmpThrottle, 0.005);
-                bool b3 = b2 && tmpUseAirBreathers == d.hasAirBreathingEngines;
-                return !b3;
-            };
-            texts[(int)TxtIdx.ENGINEPERF] = KFDText.Create("eng", MyStyleId.Greyed,
-                fmtEnginePerf, 
-                hasChangedEnginePerf);
-
-            int tmpStall = -1;
-            texts[(int)TxtIdx.STALL] = KFDText.Create("stall", MyStyleId.Greyed,
-                (Data d) => new KFDContent("Stall", d.warnStall),
-                (Data d) => SetIf(ref tmpStall, d.warnStall, d.warnStall != tmpStall));
-
-            double tmpQ = -1;
-            texts[(int)TxtIdx.Q] = KFDText.Create("q", MyStyleId.Greyed,
-                (Data d) => new KFDContent("Q  " + GuiInfo.FormatPressure(d.q), d.warnQ),
-                (Data d) => SetIf(ref tmpQ, d.q, !Util.AlmostEqualRel(d.q, tmpQ, 0.01)));
-
-            double tmpTemp = -1;
-            int    tmpWarnTemp = -1;
-            texts[(int)TxtIdx.TEMP] = KFDText.Create("temp", MyStyleId.Greyed,
-                (Data d) => new KFDContent("T " + d.highestTemp.ToString("F0") + " K", d.warnTemp),
-                (Data d) => SetIf(ref tmpTemp, ref tmpWarnTemp, d.highestTemp, d.warnTemp, !Util.AlmostEqual(d.highestTemp, tmpTemp, 1) || d.warnTemp != tmpWarnTemp));
-
-            Func<Data, KFDContent> fmtAltitude = (Data d) =>
-            {
-                string label;
-                if (isDisplayingRadarAlt)
-                    label = string.Format("Alt {0} R", GuiInfo.FormatRadarAltitude(d.radarAltitude));
-                else 
-                    label = "Alt "+GuiInfo.FormatAltitude(d.altitude);
-                int warnlevel = MyStyleId.Emph;
-                if (data.timeToImpact < 5)
-                    warnlevel = MyStyleId.Warn2;
-                else if (data.timeToImpact < 10 || d.radarAltitude < 200.0)
-                    warnlevel = MyStyleId.Warn1;
-                return new KFDContent(label, warnlevel);
-            };
-            double tmRadarAltitudeDeriv = double.PositiveInfinity;
-            double tmpAlt = -1;
-            texts[(int)TxtIdx.ALT] = KFDText.Create("alt", MyStyleId.Emph,
-                fmtAltitude,
-                (Data d) => SetIf(ref tmpAlt, ref tmRadarAltitudeDeriv, d.altitude, d.radarAltitudeDeriv, !Util.AlmostEqualRel(d.altitude, tmpAlt, 0.001) || !Util.AlmostEqualRel(d.radarAltitudeDeriv, tmRadarAltitudeDeriv, 0.01)));
-
-            Func<Data, KFDContent> fmtTime = (Data d) =>
-            {
-                String timeLabel = "";
-                switch (d.nextNode)
-                {
-                    case Data.NextNode.Ap: timeLabel = "Ap"; break;
-                    case Data.NextNode.Pe: timeLabel = "Pe"; break;
-                    case Data.NextNode.Encounter: timeLabel = "En"; break;
-                    case Data.NextNode.Maneuver: timeLabel = "Man"; break;
-                    case Data.NextNode.Escape: timeLabel = "Esc"; break;
-                }
-                timeLabel = "T" + timeLabel + " -" + GuiInfo.FormatTime(d.timeToNode);
-                return new KFDContent(timeLabel, MyStyleId.Plain);
-            };
-
-            double tmpTNode = -1;
-            texts[(int)TxtIdx.TNODE] = KFDText.Create("tnode", MyStyleId.Plain,
-                fmtTime,
-                (Data d) => SetIf(ref tmpTNode, d.timeToNode, !Util.AlmostEqual(d.timeToNode, tmpTNode, 1)));
-
-            Data.NextNode tmpNextNode1 = Data.NextNode.Maneuver;
-            double tmpAp = -1;
-            texts[(int)TxtIdx.AP] = KFDText.Create("ap", MyStyleId.Plain,
-                (Data d) => new KFDContent("Ap " + GuiInfo.FormatAltitude(data.apoapsis), data.nextNode == Data.NextNode.Ap ? MyStyleId.Emph : MyStyleId.Plain),
-                (Data d) => SetIf(ref tmpAp, ref tmpNextNode1, d.apoapsis, d.nextNode, !Util.AlmostEqualRel(d.apoapsis, tmpAp, 0.001) || d.nextNode != tmpNextNode1));
-
-            Data.NextNode tmpNextNode2 = Data.NextNode.Maneuver;
-            double tmpPe = 0;
-            texts[(int)TxtIdx.PE] = KFDText.Create("pe", MyStyleId.Plain,
-                (Data d) => new KFDContent("Pe " + GuiInfo.FormatAltitude(data.periapsis), data.nextNode == Data.NextNode.Pe ? MyStyleId.Emph : MyStyleId.Plain),
-                (Data d) => SetIf(ref tmpPe, ref tmpNextNode2, d.periapsis, d.nextNode, !Util.AlmostEqualRel(d.periapsis, tmpPe, 0.001) || d.nextNode != tmpNextNode2));
-
-            double tmpVertSpeed = -1;
-            texts[(int)TxtIdx.VSPEED] = KFDText.Create("vertspeed", MyStyleId.Emph,
-                (Data d) => new KFDContent("VS " + GuiInfo.FormatVerticalSpeed(d.verticalSpeed), GuiInfo.StyleVerticalSpeed(d)),
-                (Data d) => SetIf(ref tmpVertSpeed, d.verticalSpeed, !Util.AlmostEqualRel(d.verticalSpeed, tmpVertSpeed, 0.001)));
-
-            leftArea.Add(texts[(int)TxtIdx.VSPEED]);
-            leftArea.Add(texts[(int)TxtIdx.ALT]);
-            leftArea.Add(texts[(int)TxtIdx.TNODE]);
-            leftArea.Add(texts[(int)TxtIdx.AP]);
-            leftArea.Add(texts[(int)TxtIdx.PE]);
-            rightArea.Add(texts[(int)TxtIdx.MACH]);
-            rightArea.Add(texts[(int)TxtIdx.AIR]);
-            rightArea.Add(texts[(int)TxtIdx.ENGINEPERF]);
-            rightArea.Add(texts[(int)TxtIdx.STALL]);
-            rightArea.Add(texts[(int)TxtIdx.Q]);
-            rightArea.Add(texts[(int)TxtIdx.TEMP]);
-
-            markers = new int[(int)TxtIdx.COUNT];
-        }
-
-
+        markers = new int[(int)TxtIdx.COUNT];
     }
 
 
+    #region GUIUtil
+    // contribution by  Scialytic
+    public static String FormatVerticalSpeed(double x)
+    {
+        double a = Math.Abs(x);
+        if (a >= 1.0e3)
+        {
+            x *= 1.0e-3;
+            a *= 1.0e-3;
+            return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km/s";
+        }
+        else
+        {
+            return x.ToString("F0") + " m/s";
+        }
+    }
+
+    public static int StyleVerticalSpeed(Data d)
+    {
+        //return MyStyleId.Plain;
+        if ((d.verticalSpeed<-2.0 && d.radarAltitude<50.0) || (d.radarAltitude < -10.0*d.verticalSpeed))
+        { 
+            if (d.radarAltitude < -5.0 * d.verticalSpeed)
+                return MyStyleId.Warn2;
+            else
+                return MyStyleId.Warn1;
+        }
+        else
+            return MyStyleId.Emph;
+    }
+
+    public static String FormatPressure(double x)
+    {
+        if (x > 1.0e6)
+        {
+            x *= 1.0e-6;
+            return x.ToString(x < 10 ? "F1" : "F0") + " MPa";
+        }
+        else
+        {
+            x *= 1.0e-3;
+            return x.ToString(x < 10 ? "F1" : "F0") + " kPa";
+        }
+    }
+
+    public static String FormatAltitude(double x)
+    {
+        double a = Math.Abs(x);
+        if (a >= 1.0e9)
+        {
+            x *= 1.0e-9;
+            a *= 1.0e-9;
+            return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Gm";
+        }
+        if (a >= 1.0e6)
+        {
+            x *= 1.0e-6;
+            a *= 1.0e-6;
+            return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " Mm";
+        }
+        else
+        {
+            x *= 1.0e-3;
+            a *= 1.0e-3;
+            return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
+        }
+    }
+
+
+    public static String FormatRadarAltitude(double x)
+    {
+        double a = Math.Abs(x);
+        if (a >= 1.0e3)
+        {
+            x *= 1.0e-3;
+            a *= 1.0e-3;
+            return x.ToString(a < 10 ? "F2" : (a < 100 ? "F1" : "F0")) + " km";
+        }
+        else
+        {
+            return x.ToString("F0") + " m";
+        }
+    }
+
+
+    public static String FormatTime(double x_)
+    {
+        const int MIN = 60;
+        const int H = 3600;
+        int D = instance.timeSecondsPerDay;
+        int Y = instance.timeSecondsPerYear;
+
+        int x = (int)x_;
+        int y, d, m, h, s;
+        y = x / Y;
+        x = x % Y;
+        d = x / D;
+        x = x % D;
+        h = x / H;
+        x = x % H;
+        m = x / MIN;
+        x = x % MIN;
+        s = x;
+        int size = 3;
+        string[] arr = new string[size];
+        int idx = 0;
+        if (y > 0)
+            arr[idx++] = y.ToString() + "y";
+        if (d > 0 || idx > 0)
+            arr[idx++] = d.ToString() + "d";
+        if ((h > 0 || idx > 0) && idx < size)
+            arr[idx++] = h.ToString() + "h";
+        if ((m > 0 || idx > 0) && idx < size)
+            arr[idx++] = m.ToString() + "m";
+        if ((s > 0 || idx > 0) && idx < size)
+            arr[idx++] = s.ToString() + "s";
+        return string.Join(" ", arr, 0, idx);
+    }
+    #endregion
+}
+
+#endregion
+
+
+[KSPAddon(KSPAddon.Startup.Flight, false)]
+public class DMFlightData : MonoBehaviour
+{
+    double dtSinceLastUpdate;
+
+    bool displayUIByGuiEvent = true;
+    bool displayUIByToolbarClick = true;
+    IButton toolbarButton = null;
+    KSP.UI.Screens.ApplicationLauncherButton applauncherButton = null;
+    bool useAppLauncher = true;
+    bool useToolbar = true;
+
+    Data data = new Data();
+    bool isRecordingInFixedUpdate = false, lastIsRecordingInFixedUpdate = false;
+
+
+    void Awake() // Awake is called when the script instance is being loaded.
+    {
+        DMDebug.Log2(name + " awake!");
+            
+        DataSources.Init();
+
+        if (ToolbarManager.ToolbarAvailable && useToolbar)
+        {
+            toolbarButton = ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
+            toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
+            toolbarButton.ToolTip = "KerbalFlightData On/Off Switch";
+            toolbarButton.Visibility = new GameScenesVisibility(GameScenes.FLIGHT);
+            toolbarButton.Enabled = true;
+            toolbarButton.OnClick += (e) =>
+            {
+                displayUIByToolbarClick = !displayUIByToolbarClick;
+                UpdateEnabling();
+            };
+        }
+
+        if (useAppLauncher)
+            GameEvents.onGUIApplicationLauncherReady.Add(OnGUIAppLauncherReady);
+        GameEvents.onHideUI.Add(OnHideUI);
+        GameEvents.onShowUI.Add(OnShowUI);
+        GameEvents.OnGameSettingsApplied.Add(OnSettingsApplied);
+
+        LoadSettings();
+        UpdateEnabling(); // might start with it disabled
+    }
+
+
+    void OnDestroy() // This function is called when the MonoBehaviour will be destroyed.
+    {
+        DMDebug.Log2(name + " destroyed!");
+        SaveSettings();
+
+        KFDGuiController.instance.Destroy();
+
+        // unregister, or else errors occur
+        GameEvents.onHideUI.Remove(OnHideUI);
+        GameEvents.onShowUI.Remove(OnShowUI);
+        GameEvents.OnGameSettingsApplied.Remove(OnSettingsApplied);
+        GameEvents.onGUIApplicationLauncherReady.Remove(OnGUIAppLauncherReady);
+
+        if (applauncherButton != null)
+        {
+            KSP.UI.Screens.ApplicationLauncher.Instance.RemoveModApplication(applauncherButton);
+            applauncherButton = null;
+        }
+        if (toolbarButton != null)
+            toolbarButton.Destroy();
+    }
+
+    void OnHideUI()
+    {
+        displayUIByGuiEvent = false;
+        UpdateEnabling();
+    }
+
+    void OnShowUI()
+    {
+        displayUIByGuiEvent = true;
+        UpdateEnabling();
+    }
+
+    void OnHideTB()
+    {
+        displayUIByToolbarClick = false;
+        UpdateEnabling();
+    }
+
+    void OnShowTB()
+    {
+        displayUIByToolbarClick = true;
+        UpdateEnabling();
+    }
+
+    public void OnGUIAppLauncherReady()
+    {
+        if (applauncherButton == null)
+        {   
+            applauncherButton = KSP.UI.Screens.ApplicationLauncher.Instance.AddModApplication(
+                OnShowTB,
+                OnHideTB,
+                null,
+                null,
+                null,
+                null,
+                KSP.UI.Screens.ApplicationLauncher.AppScenes.FLIGHT,
+                (Texture)GameDatabase.Instance.GetTexture("KerbalFlightData/icon", false));
+        }
+    }
+
+
+    void OnSettingsApplied()
+    {
+        KFDGuiController guiInfo = KFDGuiController.instance;
+        if (guiInfo.ready)
+        {
+            guiInfo.ConfigureGuiElements();
+        }
+    }
+
+    void UpdateEnabling()
+    {
+        enabled = displayUIByToolbarClick && displayUIByGuiEvent;
+    }
+
+
+    void SaveSettings()
+    {
+        ConfigNode settings = new ConfigNode();
+        settings.name = "SETTINGS";
+        settings.AddValue("active", displayUIByToolbarClick);
+        KFDGuiController.instance.SaveSettings(settings);
+        settings.AddValue("useToolbar", useToolbar);
+        settings.AddValue("useAppLauncher", useAppLauncher);
+        settings.Save(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
+    }
+
+
+    void LoadSettings()
+    {
+        ConfigNode settings = new ConfigNode();
+        settings = ConfigNode.Load(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
+        if (settings != null)
+        {
+            if (settings.HasValue("active")) displayUIByToolbarClick = bool.Parse(settings.GetValue("active"));
+            settings.TryGetValue("useToolbar", ref useToolbar);
+            settings.TryGetValue("useAppLauncher", ref useAppLauncher);
+            KFDGuiController.instance.LoadSettings(settings);
+        }
+    }
+
+
+    void Start() //Start is called on the frame when a script is enabled just before any of the Update methods is called the first time.
+    {
+        DMDebug.Log2(name + " start!");
+    }
+
+
+    void OnEnable() //	This function is called when the object becomes enabled and active.
+    {
+        DMDebug.Log2(name + " enabled!");
+        dtSinceLastUpdate = Double.PositiveInfinity; // full update next time
+    }
+
+
+    void OnDisable() //	This function is called when the behaviour becomes disabled () or inactive.
+    {
+        DMDebug.Log2(name + " disabled!");
+        KFDGuiController.instance.ToggleDisplay(false); // update won't be called so lets disable the display here
+    }
+
+
+    bool CheckShouldDisplayBeOn()
+    {
+        if (!FlightGlobals.ready) return false;
+
+        Vessel vessel = FlightGlobals.ActiveVessel;
+        if (vessel == null) return false;
+
+        if (vessel.isEVA || vessel.state == Vessel.State.DEAD)
+        {
+            return false;
+        }
+        if (!FlightUIModeController.Instance.navBall.enabled) return false;
+
+        return true;
+    }
+
+
+    bool CheckFullUpdateTimer()
+    {
+        if (dtSinceLastUpdate > 0.1) // update every so and so fraction of a second
+        {
+            dtSinceLastUpdate = 0;
+            return true;
+        }
+        else return false;
+    }
+
+    void FixedUpdate()
+    {
+        if (isRecordingInFixedUpdate) 
+            DataSources.FixedUpdate(data, lastIsRecordingInFixedUpdate);
+        lastIsRecordingInFixedUpdate = isRecordingInFixedUpdate;
+    }
+
+    void LateUpdate()
+    {
+        #if DEBUG
+        if (Input.GetKeyDown(KeyCode.O))
+        {
+            DebugOutput();
+        }
+        #endif
+
+        dtSinceLastUpdate += Time.unscaledDeltaTime;
+
+        if (!KFDGuiController.instance.ready)
+            KFDGuiController.instance.Init();
+        if (!KFDGuiController.instance.ready)
+            return;
+
+        bool on = CheckShouldDisplayBeOn();
+        
+        KFDGuiController.instance.ToggleDisplay(on);
+        if (on)
+        {
+            isRecordingInFixedUpdate = true;
+            // obtain data
+            Vessel vessel = FlightGlobals.ActiveVessel;
+            DataSources.FillDataInstance(data, vessel);
+            KFDGuiController.instance.ConfigureGuiElements();
+        }
+        else
+        {
+            isRecordingInFixedUpdate = false;
+        }
+
+        if (on && CheckFullUpdateTimer())
+        {
+            KFDGuiController.instance.UpdateValues(data);
+        }
+    }
+
+    #if DEBUG
+    static void DebugOutput()
+    {
+        Debug.Log("KerbalFlightData DebugOutput");
+        DMDebug dbg = new DMDebug();
+        var obj = FlightUIModeController.Instance.gameObject;
+        obj = DMDebug.GetRoot(obj);
+        dbg.PrintGameObjectHierarchy(obj, 0);
+        dbg.Out("---------------------------------------------------------", 0);
+        var fonts = FindObjectsOfType(typeof(Font)) as Font[];
+        foreach (Font font in fonts)
+            dbg.Out(font.name, 1);
+        dbg.Out("---------------------------------------------------------", 0);
+        obj = GameObject.Find("KFD-tnode");
+        dbg.PrintHierarchy(obj, 0, false);
+        dbg.Out("---------------------------------------------------------", 0);
+        obj = GameObject.Find("TextSpeed");
+        dbg.PrintHierarchy(obj, 0, false);
+        dbg.Out("---------------------------------------------------------", 0);
+        obj = GameObject.Find("AutopilotModes");
+        dbg.PrintHierarchy(obj, 0, false);
+        dbg.Out("---------------------------------------------------------", 0);
+        obj = GameObject.Find("NavballFrame");
+        dbg.PrintHierarchy(obj, 0, false);
+        dbg.Out("---------------------------------------------------------", 0);
+        obj = obj.GetChild("IVAEVACollapseGroup");
+        dbg.PrintHierarchy(obj, 0, false);
+        dbg.Out("---------------------------------------------------------", 0);
+        var vessel = FlightGlobals.ActiveVessel;
+        dbg.Out("----- vessel : ----", 0);
+        dbg.PrintHierarchy(vessel, 0, false);
+        var f = KSP.IO.TextWriter.CreateForType<DMFlightData>("GameObject.txt", null);
+        f.Write(dbg.ToString());
+        f.Close();
+    }
+    #endif
 }
 
 
-//DMDebug.Log("kfimach = " + kfiMach == null ? "null" : kfiMach.ToString());
-/* //not going to happen ... 
- * // i'm trying to set up a Font instance with a custom bitmap font, but unluckly this draws absolutely nothing on screen, no error as well.
-theFont = new Font("DMFont");
-byte[] fubar = ((Texture2D)GUI.skin.font.material.mainTexture).EncodeToPNG();
-KSP.IO.File.WriteAllBytes<DMFlightData>(fubar, "shit.png"); // as if this was going to work ... it doesn't ...
-// next try
-Texture2D fontTex = GameDatabase.Instance.GetTexture("KerbalFlightData/Textures/plain_white", false);
-fontTex.filterMode = FilterMode.Bilinear;
-DMDebug.Log(fontTex == null ? "fontTex = null" : fontTex.ToString());
-DMDebug.Log(GUI.skin.font.material == null ? "s.font.material = null" : GUI.skin.font.material.ToString());
-theFont.characterInfo = new CharacterInfo[1];
-theFont.characterInfo[0].index = 65; // this is the decimal code for an 'A'
-theFont.characterInfo[0].uv = new Rect(0.527f, 0.156f, 0.054f, 0.125f);
-theFont.characterInfo[0].width = 8f;
-theFont.characterInfo[0].vert = new Rect(0f, -2f, 10f, -15f);
-theFont.characterInfo[0].size = 12;
-theFont.characterInfo[0].style = FontStyle.Normal;
-theFont.material = new Material(GUI.skin.font.material);
-theFont.material.mainTexture = fontTex; */
+} // namespace
