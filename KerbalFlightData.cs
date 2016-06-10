@@ -829,7 +829,7 @@ public class KFDText : MonoBehaviour
 
     public void OnDestroy()
     {
-        DMDebug.Log2(this.name + " OnDestroy");
+        //DMDebug.Log2(this.name + " OnDestroy");
         // release links to make it easier for the gc
         gt1_ = null;
         hasChanged_ = null;
@@ -850,7 +850,7 @@ public class KFDText : MonoBehaviour
         { 
             if (this.gameObject.activeSelf != value) 
             {
-                DMDebug.Log2(this.name + " enabled=" + value);
+                //DMDebug.Log2(this.name + " enabled=" + value);
                 this.gameObject.SetActive(value);
             }
         }
@@ -903,7 +903,7 @@ public class KFDArea : MonoBehaviour
 
     void OnDestroy()
     {
-        DMDebug.Log2(this.name + " OnDestroy");
+        //DMDebug.Log2(this.name + " OnDestroy");
         items.Clear();
     }
 
@@ -938,7 +938,7 @@ public class KFDArea : MonoBehaviour
         { 
             if (this.gameObject.activeSelf != value) 
             {
-                DMDebug.Log2(this.name + " enabled=" + value);
+                //DMDebug.Log2(this.name + " enabled=" + value);
                 this.gameObject.SetActive(value); 
             }
         }
@@ -1123,7 +1123,9 @@ public class KFDGuiController
             }
             var pLeft = Util.TransformPoint(goAnchorLeft.transform, anchorObject.transform, goAnchorLeft.GetComponent<RectTransform>().rect.min);
             var pRight = Util.TransformPoint(goAnchorRight.transform, anchorObject.transform, goAnchorRight.GetComponent<RectTransform>().rect.max);
-            var pVert = Util.TransformPoint(goAnchorVertical.transform, anchorObject.transform, 0f, 11f);
+            const float ANCHOR_POSITION_COMPENSATION = 11f;
+            const float VERTICAL_TEXT_OFFSET = 5f;
+            var pVert = Util.TransformPoint(goAnchorVertical.transform, anchorObject.transform, 0f, ANCHOR_POSITION_COMPENSATION+VERTICAL_TEXT_OFFSET);
             screenAnchorLeft = pLeft.x;
             screenAnchorRight = pRight.x + 5f;
             screenAnchorVertical = pVert.y;
@@ -1503,49 +1505,36 @@ public class KFDGuiController
 
 
 [KSPAddon(KSPAddon.Startup.Flight, false)]
-public class DMFlightData : MonoBehaviour
+public class DMFlightData : DaMichelToolbarSuperWrapper.PluginWithToolbarSupport
 {
     double dtSinceLastUpdate;
-
-    bool displayUIByGuiEvent = true;
-    bool displayUIByToolbarClick = true;
-    IButton toolbarButton = null;
-    KSP.UI.Screens.ApplicationLauncherButton applauncherButton = null;
-    bool useAppLauncher = true;
-    bool useToolbar = true;
 
     Data data = new Data();
     bool isRecordingInFixedUpdate = false, lastIsRecordingInFixedUpdate = false;
 
+    protected override DaMichelToolbarSuperWrapper.ToolbarInfo GetToolbarInfo()
+    {
+        return new DaMichelToolbarSuperWrapper.ToolbarInfo {
+            name = "KerbalFlightData",
+            tooltip = "KerbalFlightData On/Off Switch",
+            toolbarTexture = "KerbalFlightData/toolbarbutton",
+            launcherTexture = "KerbalFlightData/icon",
+            visibleInScenes = new GameScenes[] { GameScenes.FLIGHT }
+        };
+    }
 
     void Awake() // Awake is called when the script instance is being loaded.
     {
         DMDebug.Log2(name + " awake!");
-            
+        LoadSettings();
+
         DataSources.Init();
 
-        if (ToolbarManager.ToolbarAvailable && useToolbar)
-        {
-            toolbarButton = ToolbarManager.Instance.add("KerbalFlightData", "damichelsflightdata");
-            toolbarButton.TexturePath = "KerbalFlightData/toolbarbutton";
-            toolbarButton.ToolTip = "KerbalFlightData On/Off Switch";
-            toolbarButton.Visibility = new GameScenesVisibility(GameScenes.FLIGHT);
-            toolbarButton.Enabled = true;
-            toolbarButton.OnClick += (e) =>
-            {
-                displayUIByToolbarClick = !displayUIByToolbarClick;
-                UpdateEnabling();
-            };
-        }
+        InitializeToolbars();
 
-        if (useAppLauncher)
-            GameEvents.onGUIApplicationLauncherReady.Add(OnGUIAppLauncherReady);
-        GameEvents.onHideUI.Add(OnHideUI);
-        GameEvents.onShowUI.Add(OnShowUI);
         GameEvents.OnGameSettingsApplied.Add(OnSettingsApplied);
 
-        LoadSettings();
-        UpdateEnabling(); // might start with it disabled
+        OnGuiVisibilityChange(); // might start with it disabled
     }
 
 
@@ -1557,58 +1546,9 @@ public class DMFlightData : MonoBehaviour
         KFDGuiController.instance.Destroy();
 
         // unregister, or else errors occur
-        GameEvents.onHideUI.Remove(OnHideUI);
-        GameEvents.onShowUI.Remove(OnShowUI);
         GameEvents.OnGameSettingsApplied.Remove(OnSettingsApplied);
-        GameEvents.onGUIApplicationLauncherReady.Remove(OnGUIAppLauncherReady);
-
-        if (applauncherButton != null)
-        {
-            KSP.UI.Screens.ApplicationLauncher.Instance.RemoveModApplication(applauncherButton);
-            applauncherButton = null;
-        }
-        if (toolbarButton != null)
-            toolbarButton.Destroy();
-    }
-
-    void OnHideUI()
-    {
-        displayUIByGuiEvent = false;
-        UpdateEnabling();
-    }
-
-    void OnShowUI()
-    {
-        displayUIByGuiEvent = true;
-        UpdateEnabling();
-    }
-
-    void OnHideTB()
-    {
-        displayUIByToolbarClick = false;
-        UpdateEnabling();
-    }
-
-    void OnShowTB()
-    {
-        displayUIByToolbarClick = true;
-        UpdateEnabling();
-    }
-
-    public void OnGUIAppLauncherReady()
-    {
-        if (applauncherButton == null)
-        {   
-            applauncherButton = KSP.UI.Screens.ApplicationLauncher.Instance.AddModApplication(
-                OnShowTB,
-                OnHideTB,
-                null,
-                null,
-                null,
-                null,
-                KSP.UI.Screens.ApplicationLauncher.AppScenes.FLIGHT,
-                (Texture)GameDatabase.Instance.GetTexture("KerbalFlightData/icon", false));
-        }
+        
+        TearDownToolbars();
     }
 
 
@@ -1621,9 +1561,9 @@ public class DMFlightData : MonoBehaviour
         }
     }
 
-    void UpdateEnabling()
+    protected override  void OnGuiVisibilityChange()
     {
-        enabled = displayUIByToolbarClick && displayUIByGuiEvent;
+        enabled = isGuiVisible;
     }
 
 
@@ -1631,23 +1571,20 @@ public class DMFlightData : MonoBehaviour
     {
         ConfigNode settings = new ConfigNode();
         settings.name = "SETTINGS";
-        settings.AddValue("active", displayUIByToolbarClick);
+        SaveMutableToolbarSettings(settings);
+        SaveImmutableToolbarSettings(settings);
         KFDGuiController.instance.SaveSettings(settings);
-        settings.AddValue("useToolbar", useToolbar);
-        settings.AddValue("useAppLauncher", useAppLauncher);
         settings.Save(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
     }
 
 
     void LoadSettings()
     {
-        ConfigNode settings = new ConfigNode();
-        settings = ConfigNode.Load(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
+        ConfigNode settings = ConfigNode.Load(AssemblyLoader.loadedAssemblies.GetPathByType(typeof(DMFlightData)) + "/settings.cfg");
         if (settings != null)
         {
-            if (settings.HasValue("active")) displayUIByToolbarClick = bool.Parse(settings.GetValue("active"));
-            settings.TryGetValue("useToolbar", ref useToolbar);
-            settings.TryGetValue("useAppLauncher", ref useAppLauncher);
+            LoadMutableToolbarSettings(settings);
+            LoadImmutableToolbarSettings(settings);
             KFDGuiController.instance.LoadSettings(settings);
         }
     }

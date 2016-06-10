@@ -31,7 +31,7 @@ using UnityEngine;
 
 
 // TODO: Change to your plugin's namespace here.
-namespace KerbalFlightData {
+namespace DaMichelToolbarSuperWrapper {
 
 
 
